@@ -22,37 +22,39 @@ import math
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
+DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
+
 class Config:
     MODEL_PATH = "models/v5_5_ru.pt"
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    SAMPLE_RATE = 48000
+    SAMPLE_RATE = 48000 # 8000 24000 48000
     HOST = "127.0.0.1"
     PORT = 5000
-    REQUEST_TIMEOUT = 15  # ожидание ответа от модели, секунд
-    MAX_QUEUE_SIZE = 5  # Максимальный размер очереди
-    MAX_TEXT_LENGTH = 950  # Максимальная длина текста
+    REQUEST_TIMEOUT = 15  # ожидание ответа от модели (секунды)
+    MAX_QUEUE_SIZE = 4  # Максимальный размер очереди
+    MAX_TEXT_LENGTH = 950  # Максимальная длина текста (ограничение модели 1000 символов)
     
     # Настройки динамической скорости
     SPEED_ADJUSTMENT_INTERVAL = 1.0  # Интервал обновления скорости, секунд
-    SPEED_SMOOTHING_FACTOR = 0.4  # Коэффициент сглаживания (0-1, чем выше, тем быстрее реакция)
-    BASE_SPEED = 1.0  # Базовая скорость (когда очередь пуста)
+    SPEED_SMOOTHING_FACTOR = 0.5  # Коэффициент сглаживания (0-1, чем выше, тем быстрее реакция)
+    BASE_SPEED = 1.0  # Базовый коэффициент скорости (когда очередь пуста)
     MAX_QUEUE_FACTOR = 3.0  # Максимальное ускорение при полной очереди
     SPEED_DECAY_RATE = 3.0  # Скорость уменьшения скорости (быстрее чем увеличение)
     
-    # Настройки снижения качества при нагрузке CPU
-    CPU_MONITOR_INTERVAL = 0.5  # Интервал измерения CPU (секунды)
+    # Настройки снижения качества генерации при нагрузке CPU
+    CPU_MONITOR_INTERVAL = 1.0  # Интервал измерения CPU (секунды)
+    CPU_SAMPLE_DURATION = 0.1  # Длительность замера CPU (секунды)
     CPU_HIGH_THRESHOLD = 80.0  # Порог высокой нагрузки (%)
     CPU_CRITICAL_THRESHOLD = 95.0  # Порог критической нагрузки (%)
-    CPU_SAMPLE_DURATION = 0.1  # Длительность замера CPU (сек)
     
     # Доступные конфигурации качества генерации
     QUALITY_LEVELS = [
-        {"sample_rate": 8000, "put_accent": False, "put_yo": False, "name": "LOWEST"},      # Уровень 0
-        {"sample_rate": 8000, "put_accent": True, "put_yo": False, "name": "LOW"},        # Уровень 1
-        {"sample_rate": 24000, "put_accent": False, "put_yo": False, "name": "MEDIUM"},      # Уровень 2
-        {"sample_rate": 24000, "put_accent": True, "put_yo": True, "name": "HIGH"},       # Уровень 3
-        {"sample_rate": 48000, "put_accent": True, "put_yo": False, "name": "VERY_HIGH"},   # Уровень 4
-        {"sample_rate": 48000, "put_accent": True, "put_yo": True, "name": "MAXIMUM"}       # Уровень 5
+        {"sample_rate": 8000,  "put_accent": False, "put_yo": False, "name": "LOWEST"},
+        {"sample_rate": 8000,  "put_accent": True,  "put_yo": False, "name": "LOW"},
+        {"sample_rate": 24000, "put_accent": False, "put_yo": False, "name": "MEDIUM"},
+        {"sample_rate": 24000, "put_accent": True,  "put_yo": True,  "name": "HIGH"},
+        {"sample_rate": 48000, "put_accent": True,  "put_yo": False, "name": "VERY_HIGH"},
+        {"sample_rate": 48000, "put_accent": True,  "put_yo": True,  "name": "MAXIMUM"}
     ]
     
 class AudioPauses:
@@ -71,7 +73,7 @@ SPEAKERS = [
     {"id": 4, "name": "eugene", "style": "male", "lang": ["ru"]},
 ]
 
-# Расширенный словарь с параметрами голосов
+# Параметры голосов
 VOICE_SETTINGS = {
     "aidar": {"volume_boost": 3, "pitch": "high", "base_speed": 1.1},
     "eugene": {"volume_boost": 0.5, "pitch": "low", "base_speed": 0.9},
@@ -80,85 +82,72 @@ VOICE_SETTINGS = {
     "xenia": {"volume_boost": 1, "pitch": "medium", "base_speed": 0.95}
 }
 
+
 # ==================== МОНИТОР CPU ====================
 
 class CPUMonitor:
-    """Щадящий мониторинг нагрузки CPU в отдельном потоке"""
+    """Мониторинг нагрузки CPU и управление качеством генерации"""
     
     def __init__(self):
-        self.current_load = 0.0
         self.current_quality_level = len(Config.QUALITY_LEVELS) - 1  # Начинаем с максимального
-        self.quality_stable_since = time.time()
+        self.current_load = 0.0
         self.last_change_time = 0
         self.max_level = len(Config.QUALITY_LEVELS) - 1
-
         self.lock = Lock()
         self.running = True
         
         # История нагрузки для сглаживания
         self.load_history = deque(maxlen=3)
         
-        # Минимальный интервал между изменениями качества (2 секунды)
-        self.min_change_interval = 2.0
+        # Минимальный интервал между изменениями качества (секунды)
+        self.min_change_interval = 1.5
         
         self.monitor_thread = Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
     
-    def _get_cpu_load_gentle(self) -> float:
-        """Щадящее измерение CPU нагрузки"""
+    def _get_cpu_load(self) -> float:
+        """Измерение текущей CPU нагрузки"""
         try:
-            cpu_percent = psutil.cpu_percent(interval=Config.CPU_SAMPLE_DURATION)
-            return cpu_percent
+            return psutil.cpu_percent(interval=Config.CPU_SAMPLE_DURATION)
         except Exception as e:
-            print(f"[CPU Monitor] Error: {e}")
+            if DEBUG:
+                print(f"[CPU Monitor] Error: {e}")
             return 0.0
     
-    def _get_average_load(self) -> float:
-        """Получить среднюю нагрузку за последние измерения"""
-        if not self.load_history:
-            return self.current_load
-        return sum(self.load_history) / len(self.load_history)
-    
     def _calculate_target_quality(self, avg_load: float) -> int:
-        """Расчет целевого уровня качества на основе нагрузки"""
-        
-        # Плавное определение целевого уровня в зависимости от нагрузки
+        """Расчет целевого уровня качества на основе средней нагрузки"""
         if avg_load >= Config.CPU_CRITICAL_THRESHOLD:
-            return 0
+            return 0  # Критическая нагрузка - минимальное качество
         elif avg_load >= Config.CPU_HIGH_THRESHOLD:
+            # Плавное снижение качества в зависимости от нагрузки
             load_ratio = (avg_load - Config.CPU_HIGH_THRESHOLD) / (Config.CPU_CRITICAL_THRESHOLD - Config.CPU_HIGH_THRESHOLD)
-            reduction = int(load_ratio * 5)  # Максимум снижение на 5 уровней
-            target = max(0, self.max_level - reduction)
-            return target
+            reduction = int(load_ratio * self.max_level)
+            return max(0, self.max_level - reduction)
         else:
-            return self.max_level
+            return self.max_level  # Нормальная нагрузка - максимальное качество
     
     def _monitor_loop(self):
-        """Цикл мониторинга CPU"""
+        """Основной цикл мониторинга CPU"""
         while self.running:
             try:
                 # Измеряем нагрузку
-                cpu_load = self._get_cpu_load_gentle()
+                cpu_load = self._get_cpu_load()
                 
                 with self.lock:
-                    # Добавляем в историю
+                    # Сглаживание через историю
                     self.load_history.append(cpu_load)
-                    avg_load = self._get_average_load()
+                    avg_load = sum(self.load_history) / len(self.load_history)
                     self.current_load = avg_load
                     
-                    # Рассчитываем целевой уровень качества
+                    # Определяем целевой уровень качества
                     target_level = self._calculate_target_quality(avg_load)
-                    
                     now = time.time()
                     
-                    # Изменяем качество только если:
-                    # 1. Целевой уровень отличается от текущего
-                    # 2. Прошло достаточно времени с последнего изменения
+                    # Изменяем качество при необходимости
                     if target_level != self.current_quality_level and \
                        now - self.last_change_time >= self.min_change_interval:
                         
                         old_level = self.current_quality_level
-                        old_config = Config.QUALITY_LEVELS[old_level]
                         
                         # Постепенное изменение (на 1 уровень за раз)
                         if target_level > self.current_quality_level:
@@ -166,19 +155,20 @@ class CPUMonitor:
                         else:
                             self.current_quality_level = max(self.current_quality_level - 1, 0)
                         
-                        new_config = Config.QUALITY_LEVELS[self.current_quality_level]
                         self.last_change_time = now
-                        self.quality_stable_since = now
                         
-                        # Логируем изменение
-                        direction = "↑" if self.current_quality_level > old_level else "↓"
-                        print(f"[CPU] {direction} LOAD {avg_load:.1f}% → {old_config['name']} → {new_config['name']}")
-                        print(f"      {new_config['sample_rate']}Hz, Accent: {new_config['put_accent']}, Yo: {new_config['put_yo']}")
+                        if DEBUG:
+                            old_config = Config.QUALITY_LEVELS[old_level]
+                            new_config = Config.QUALITY_LEVELS[self.current_quality_level]
+                            direction = "↑" if self.current_quality_level > old_level else "↓"
+                            print(f"[CPU] {direction} LOAD {avg_load:.1f}% → {old_config['name']} → {new_config['name']}")
+                            print(f"      {new_config['sample_rate']}Hz, Accent: {new_config['put_accent']}, Yo: {new_config['put_yo']}")
                 
                 time.sleep(Config.CPU_MONITOR_INTERVAL)
                 
             except Exception as e:
-                print(f"[CPU Monitor Error] {e}")
+                if DEBUG:
+                    print(f"[CPU Monitor Error] {e}")
                 time.sleep(1)
     
     def get_current_quality_config(self) -> dict:
@@ -186,29 +176,11 @@ class CPUMonitor:
         with self.lock:
             return Config.QUALITY_LEVELS[self.current_quality_level].copy()
     
-    def get_current_sample_rate(self) -> int:
-        """Получить текущую частоту дискретизации"""
-        with self.lock:
-            return Config.QUALITY_LEVELS[self.current_quality_level]["sample_rate"]
-    
-    def get_put_accent(self) -> bool:
-        """Получить текущее значение put_accent"""
-        with self.lock:
-            return Config.QUALITY_LEVELS[self.current_quality_level]["put_accent"]
-    
-    def get_put_yo(self) -> bool:
-        """Получить текущее значение put_yo"""
-        with self.lock:
-            return Config.QUALITY_LEVELS[self.current_quality_level]["put_yo"]
-    
     def get_cpu_load(self) -> float:
         """Получить текущую нагрузку CPU"""
         with self.lock:
             return self.current_load
-    
-    def stop(self):
-        """Остановка монитора"""
-        self.running = False
+
 
 # ==================== УТИЛИТЫ ====================
 
@@ -278,18 +250,12 @@ class TextProcessor:
         result_parts = []
         i = 0
         n = len(text)
-        has_latin = any(ch in self.latin_letters for ch in text)
-        
         ends_with_sentence = False
         last_was_space = False
+        has_latin = any(ch in self.latin_letters for ch in text)
         
         while i < n:
             ch = text[i]
-            
-            # Пропускаем спецсимволы
-            # if ch in '#+%':
-                # i += 1
-                # continue
             
             # 1. ЧИСЛА
             if ch.isdigit():
@@ -338,7 +304,7 @@ class TextProcessor:
                 i += 1
                 continue
             
-            # 6. МУСОР -> ПРОБЕЛ
+            # 6. МУСОР в ПРОБЕЛ
             if not last_was_space:
                 result_parts.append(' ')
                 last_was_space = True
@@ -441,6 +407,10 @@ class AudioProcessor:
     def synthesize(self, text: str, speaker: str, dynamic_speed: float, 
                    pitch_adjustment: float, volume_adjustment: float, 
                    requested_sample_rate: int) -> bytes:
+        
+        # Замер времени выполнения
+        start_time = time.time() if DEBUG else None
+        
         try:
             # Получаем актуальную конфигурацию качества от монитора CPU
             quality_config = self.cpu_monitor.get_current_quality_config()
@@ -470,7 +440,12 @@ class AudioProcessor:
             final_volume = voice_settings["volume_boost"] + volume_adjustment
             
             # Обработка текста
+            text_start = time.time() if DEBUG else None
             processed_text = self.text_processor.process_text(text)
+            if DEBUG:
+                text_time = (time.time() - text_start) * 1000
+                print(f"[DEBUG] Text processing: {text_time:.2f}ms")
+            
             if not processed_text:
                 processed_text = text
             
@@ -480,11 +455,15 @@ class AudioProcessor:
             cpu_load = self.cpu_monitor.get_cpu_load()
             quality_name = quality_config["name"]
             
-            print(f"[DEBUG] Quality: {quality_name} | CPU: {cpu_load:.1f}% | Sample rate: {sample_rate}Hz")
-            print(f"[DEBUG] put_accent={put_accent}, put_yo={put_yo} | Speaker: {speaker}")
-            print(f"[DEBUG] Final speed: {final_speed:.2f}x (base: {voice_settings['base_speed']}, dynamic: {dynamic_speed:.2f})")
+            if DEBUG:
+                print(f"[DEBUG] Quality: {quality_name} | CPU: {cpu_load:.1f}% | Sample rate: {sample_rate}Hz")
+                print(f"[DEBUG] put_accent={put_accent}, put_yo={put_yo} | Speaker: {speaker}")
+                print(f"[DEBUG] Final speed: {final_speed:.2f}x (base: {voice_settings['base_speed']}, dynamic: {dynamic_speed:.2f})")
+            else:
+                print(f"[INFO] Quality: {quality_name} | CPU: {cpu_load:.1f}%")
             
-            # Генерация аудио с динамическими параметрами качества
+            # Генерация аудио
+            tts_start = time.time() if DEBUG else None
             audio = self.model.apply_tts(
                 ssml_text=ssml,
                 speaker=speaker,
@@ -492,27 +471,50 @@ class AudioProcessor:
                 put_accent=put_accent,
                 put_yo=put_yo
             )
+            if DEBUG:
+                tts_time = time.time() - tts_start
+                if tts_time >= 1.0:
+                    print(f"[DEBUG] TTS Generation: {tts_time:.1f}s")
+                else:
+                    print(f"[DEBUG] TTS Generation: {tts_time*1000:.1f}ms")
             
             audio_np = audio.cpu().numpy() if hasattr(audio, 'cpu') else np.array(audio, dtype=np.float32)
             
             # Применение громкости
+            volume_start = time.time() if DEBUG else None
             if final_volume != 0:
                 volume_factor = 10 ** (final_volume / 20.0)
                 audio_np = np.clip(audio_np * volume_factor, -1.0, 1.0)
+            if DEBUG and volume_start:
+                print(f"[DEBUG] Volume adjustment: {(time.time() - volume_start) * 1000:.2f}ms")
             
             # Конвертация в WAV
+            wav_start = time.time() if DEBUG else None
             audio_int16 = (audio_np * 32767).astype(np.int16)
-            return self._numpy_to_wav_bytes(audio_int16, sample_rate)
+            result = self._numpy_to_wav_bytes(audio_int16, sample_rate)
+            if DEBUG and wav_start:
+                print(f"[DEBUG] WAV conversion: {(time.time() - wav_start) * 1000:.2f}ms")
+            
+            # Общее время выполнения
+            if DEBUG and start_time:
+                total_time = (time.time() - start_time) * 1000
+                audio_duration = len(audio_int16) / sample_rate
+                realtime_factor = total_time / (audio_duration * 1000) if audio_duration > 0 else 0
+                print(f"[DEBUG] === TOTAL: {total_time:.2f}ms (audio: {audio_duration:.2f}s, RTF: {realtime_factor:.2f}x) ===")
+            
+            return result
             
         except Exception as e:
             print(f"[X] Ошибка синтеза: {e}")
-            traceback.print_exc()
+            if DEBUG:
+                traceback.print_exc()
             # Возврат короткой тишины
             silent_audio = np.zeros(int(16000 * 0.1), dtype=np.float32)
             audio_int16 = (silent_audio * 32767).astype(np.int16)
             return self._numpy_to_wav_bytes(audio_int16, 16000)
     
     def _numpy_to_wav_bytes(self, audio_int16: np.ndarray, sample_rate: int) -> bytes:
+        """Ручная сборка WAV данных для отправки клиенту"""
         buffer = io.BytesIO()
         channels = 1
         bits_per_sample = 16
@@ -551,7 +553,7 @@ class DynamicSpeedController:
         self.lock = Lock()
         self.queue_sizes = deque(maxlen=10)  # Храним историю размеров очереди для сглаживания
         self.last_reported_speed = Config.BASE_SPEED
-        self.report_threshold = 0.15  # Печатать только при изменении скорости > 15%
+        self.report_threshold = 0.1
     
     def update_queue_size(self, queue_size: int, max_queue_size: int):
         """Обновление информации о размере очереди"""
@@ -561,7 +563,7 @@ class DynamicSpeedController:
             load_factor = min(1.0, avg_queue_size / max_queue_size)
             speed_multiplier = 1.0 + (load_factor ** 1.5) * (Config.MAX_QUEUE_FACTOR - 1.0)
             self.target_speed_factor = speed_multiplier
-            if abs(speed_multiplier - self.last_reported_speed) > self.report_threshold:
+            if DEBUG and abs(speed_multiplier - self.last_reported_speed) > self.report_threshold:
                 print(f"[SPEED] {self.last_reported_speed:.2f}x → {speed_multiplier:.2f}x (load: {load_factor:.0%}, queue: {queue_size})")
                 self.last_reported_speed = speed_multiplier
     
@@ -633,7 +635,8 @@ class Session:
                 old_request.cleanup()
                 del old_request
                 self.queue.put(audio_request, block=False)
-                print(f"[!] Очередь переполнена, удален старый запрос")
+                if DEBUG:
+                    print(f"[!] Очередь переполнена, удален старый запрос")
                 return True
             except:
                 return False
@@ -693,7 +696,8 @@ class QueueManager:
                 self.speed_controller.update_queue_size(total_queue_size, Config.MAX_QUEUE_SIZE)
                 time.sleep(Config.SPEED_ADJUSTMENT_INTERVAL)
             except Exception as e:
-                print(f"[X] Ошибка в speed adjustment loop: {e}")
+                if DEBUG:
+                    print(f"[X] Ошибка в speed adjustment loop: {e}")
                 time.sleep(0.1)
     
     def _return_result(self, audio_request):
@@ -755,8 +759,9 @@ class QueueManager:
                         except Empty:
                             pass
                         except Exception as e:
-                            print(f"[X] Ошибка обработки запроса: {e}")
-                            traceback.print_exc()
+                            if DEBUG:
+                                print(f"[X] Ошибка обработки запроса: {e}")
+                                traceback.print_exc()
                             with session.lock:
                                 if session.currently_playing:
                                     session.currently_playing.cleanup()
@@ -766,7 +771,8 @@ class QueueManager:
                 time.sleep(0.01)
                 
             except Exception as e:
-                print(f"[X] Ошибка в processing loop: {e}")
+                if DEBUG:
+                    print(f"[X] Ошибка в processing loop: {e}")
                 time.sleep(0.1)
     
     def _store_result(self, audio_request):
@@ -789,7 +795,7 @@ class TTServer:
     def load_model(self):
         if not os.path.exists(Config.MODEL_PATH):
             print(f"\n[X] Модель не найдена: {Config.MODEL_PATH}")
-            print(f"[!] Пожалуйста, скачайте модель с https://models.silero.ai/models/tts/ru/v5_5_ru.pt")
+            print(f"[!] Скачайте модель с https://models.silero.ai/models/tts/ru/v5_5_ru.pt")
             sys.exit(1)
         
         print(f"[*] Загрузка модели... ({Config.DEVICE})")
@@ -837,12 +843,18 @@ class TTServer:
                 return {"error": "Text is required"}, 400
             
             text_length = len(text)
+            max_text_length = Config.MAX_TEXT_LENGTH
             
-            if text_length > Config.MAX_TEXT_LENGTH:
-                text = text[:Config.MAX_TEXT_LENGTH]
-                print(f"[WARNING] Text too long: {text_length} chars (text truncated to {Config.MAX_TEXT_LENGTH} chars)")
+            if DEBUG:
+                print('#' * 70)
+                
+            if text_length > max_text_length:
+                text = text[:max_text_length]
+                print(f"[WARNING] Text too long: {text_length} chars (text truncated to {max_text_length} chars)")
             
-            print(f"[DEBUG] Text length = {min(text_length, Config.MAX_TEXT_LENGTH)}")
+            if DEBUG:
+                print(f"[DEBUG] Text: {text}")
+                print(f"[DEBUG] Text length: {min(text_length, max_text_length)}")
             
             # Получаем имя спикера
             if 0 <= speaker_id < len(SPEAKERS):
@@ -878,6 +890,7 @@ class TTServer:
         print(f" Silero TTS Server")
         print(f" Device: {Config.DEVICE}")
         print(f" URL: http://{Config.HOST}:{Config.PORT}")
+        print(f" DEBUG mode: {'ON' if DEBUG else 'OFF'}")
         print('=' * 70)
         print(f"\nCPU thresholds: {Config.CPU_HIGH_THRESHOLD}% (high), {Config.CPU_CRITICAL_THRESHOLD}% (critical)")
         print("\nEndpoints:")
