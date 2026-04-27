@@ -1,4 +1,4 @@
-WIP. [тестовый CPU сервер для win8+ x64 Всё-в-Одном](https://drive.google.com/file/d/1kp1tDwOIZhDWaOBJdRW2LM-TAidLtUeO/view?usp=drive_link)
+WIP. [тестовый CPU сервер для win8+ x64 Всё-в-Одном](https://drive.google.com/file/d/1yBYmxAb43OktS8t_-VyOr0bL8weJpiJY/view?usp=sharing)
 
 [Обсуждение Luna Translator на форуме 4PDA](https://4pda.to/forum/index.php?showtopic=1100472)
 
