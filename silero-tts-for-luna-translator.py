@@ -1,24 +1,23 @@
 # silero-tts-for-luna-translator.py
 
-import io, os, sys, time, struct, torch, numpy as np, psutil
+import io, os, sys, time, struct, torch, psutil, numpy as np
 from bottle import Bottle, request, response, run
 from num2words import num2words
 from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-# DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
-DEBUG = True
-MAIN_VERSION = "0.2b"
+DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
+MAIN_VERSION = "0.2"
 
 class Config:
     MODEL_PATH = "models/v5_5_ru.pt"
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     SAMPLE_RATE = 48000 # Hz
-    HOST, PORT = "127.0.0.1", 5000
+    HOST, PORT = "127.0.0.1", 23456
     MAX_TEXT_LENGTH = 950 # chars
     BASE_SPEED = 1.0
-    CPU_MONITOR_INTERVAL, CPU_SAMPLE_DURATION = 1.0, 0.1 # sec
+    CPU_IDLE_TIMEOUT, CPU_MONITOR_INTERVAL, CPU_SAMPLE_DURATION = 20.0, 1.5, 0.1 # sec
     CPU_HIGH_THRESHOLD, CPU_CRITICAL_THRESHOLD = 80.0, 95.0 # %
     QUALITY_LEVELS = [
         {"sample_rate": 8000,  "put_accent": False, "put_yo": False, "name": "LOWEST"},
@@ -47,10 +46,42 @@ class CPUMonitor:
     def __init__(self):
         self.current_quality_level = len(Config.QUALITY_LEVELS) - 1
         self.current_load, self.last_change_time, self.max_level = 0.0, 0, len(Config.QUALITY_LEVELS) - 1
-        self.lock, self.running, self.load_history, self.max_history_size = threading.Lock(), True, [], 3
+        self.lock, self.running, self.load_history, self.max_history_size = threading.Lock(), False, [], 3
         self.min_change_interval = 1.5
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
+        self.monitor_thread = None
+        self.last_activity_time = 0
+    
+    def start_monitoring(self):
+        """Запускает мониторинг CPU"""
+        with self.lock:
+            if self.running:
+                return
+            self.last_activity_time = time.time()
+            self.running = True
+            self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self.monitor_thread.start()
+            if DEBUG: print("[CPU] Monitoring ON")
+    
+    def stop_monitoring(self):
+        """Останавливает мониторинг CPU"""
+        with self.lock:
+            if not self.running:
+                return
+            self.running = False
+            if DEBUG: print("[CPU] Monitoring OFF")
+    
+    def record_activity(self):
+        """Фиксирует активность клиента"""
+        self.last_activity_time = time.time()
+        if not self.running:
+            self.start_monitoring()
+    
+    def _check_idle_and_stop(self):
+        """Проверяет бездействие и останавливает монитор при необходимости"""
+        if time.time() - self.last_activity_time >= Config.CPU_IDLE_TIMEOUT:
+            self.stop_monitoring()
+            return True
+        return False
     
     def _get_cpu_load(self) -> float:
         try: return psutil.cpu_percent(interval=Config.CPU_SAMPLE_DURATION)
@@ -73,6 +104,8 @@ class CPUMonitor:
     def _monitor_loop(self):
         while self.running:
             try:
+                if self._check_idle_and_stop():
+                    break
                 cpu_load = self._get_cpu_load()
                 with self.lock:
                     self._add_to_history(cpu_load)
@@ -88,7 +121,8 @@ class CPUMonitor:
                         if DEBUG:
                             print(f"[CPU] {'↑' if self.current_quality_level > old_level else '↓'} LOAD {avg_load:.1f}% → {Config.QUALITY_LEVELS[old_level]['name']} → {Config.QUALITY_LEVELS[self.current_quality_level]['name']}")
                 time.sleep(Config.CPU_MONITOR_INTERVAL)
-            except: time.sleep(1)
+            except: 
+                time.sleep(5)
     
     def get_current_quality_config(self) -> dict:
         with self.lock: return Config.QUALITY_LEVELS[self.current_quality_level].copy()
@@ -97,7 +131,7 @@ class CPUMonitor:
         with self.lock: return self.current_load
 
 # ==================== УТИЛИТЫ ====================
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=512)
 def num_to_words(num: str) -> str:
     """Конвертация числа в текст на русском языке"""
     if not num or not num.isdigit() or len(num) > 9: return str(num) if num else ""
@@ -227,6 +261,9 @@ class AudioProcessor:
     def synthesize(self, text: str, speaker_id: int, length: float, pitch_adjustment: float) -> bytes:
         start_time = time.time() if DEBUG else None
         try:
+            # Фиксируем активность клиента
+            self.cpu_monitor.record_activity()
+            
             quality = self.cpu_monitor.get_current_quality_config()
             sample_rate = min(Config.SAMPLE_RATE, quality["sample_rate"])
             speaker = SPEAKERS[speaker_id]["name"] if 0 <= speaker_id < len(SPEAKERS) else SPEAKERS[0]["name"]
@@ -265,7 +302,7 @@ class AudioProcessor:
             return self._numpy_to_wav_bytes(silent, 16000)
 
 # ==================== HTTP СЕРВЕР ====================
-class TTServer:
+class TTSServer:
     """HTTP сервер для Silero TTS с REST API"""
     def __init__(self):
         self.app, self.model, self.cpu_monitor, self.audio_processor = Bottle(), None, None, None
@@ -308,13 +345,12 @@ class TTServer:
     
     def run(self):
         self.load_model()
-        print('=' * 70)
+        print('=' * 60)
         print(f" Silero TTS Server for LunaTranslator v{MAIN_VERSION}")
         print(f" Device: {str(Config.DEVICE).upper()} | http://{Config.HOST}:{Config.PORT}")
-        print(f" Endpoints: GET /voice/speakers | GET /voice/vits?text=&id=&length=&pitch=")
-        print(f" CPU thresholds: {Config.CPU_HIGH_THRESHOLD}% (high), {Config.CPU_CRITICAL_THRESHOLD}% (critical)")
-        print('=' * 70)
-        run(self.app, host=Config.HOST, port=Config.PORT, quiet=False)
+        print('=' * 60)
+        print("Press Ctrl-C to quit." if not DEBUG else "DEBUG mode ON")
+        run(self.app, host=Config.HOST, port=Config.PORT, quiet=False if DEBUG else True)
 
 if __name__ == "__main__":
-    TTServer().run()
+    TTSServer().run()
