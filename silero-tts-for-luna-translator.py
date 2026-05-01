@@ -1,22 +1,26 @@
 # silero-tts-for-luna-translator.py
-# pav13
+# pav13 - CORS FIX
 
 import os, sys, time, struct, torch, psutil, signal, gc, numpy as np
-from bottle import Bottle, request, response, run
+from bottle import Bottle, request, response, run, hook
 from num2words import num2words
 from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
+MAIN_VERSION = "0.4-dev"
 # DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 DEBUG = True
-MAIN_VERSION = "0.3.2-dev"
 
 
 class Config:
     """Конфигурация приложения"""
     MODEL_PATH = "models/v5_5_ru.pt"
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    TORCH_DEVICE = os.environ.get('TORCH_DEVICE', 'cpu').lower()
+    if TORCH_DEVICE in ('cuda', 'gpu'):
+        DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        DEVICE = torch.device('cpu')
     SAMPLE_RATE = 48000
     HOST, PORT = "127.0.0.1", 23456
     MAX_TEXT_LENGTH = 800
@@ -197,8 +201,7 @@ class TextProcessor:
     pause3 = 320
     pause4 = 420
     BREAK_TIME_MAP = {'.': pause3, ',': pause1, '!': pause3, '?': pause3, '(': pause1, ')': pause1, '[': pause1, ']': pause1, ':': pause0, ';': pause2, '—': pause2, '…': pause4}
-    # EMOTIONS = {'!': (112, 1), '?': (92, 1)}
-    EMOTIONS = {'!': (100, 0), '?': (100, 0)}
+    EMOTIONS = {'!': (107, 0), '?': (93, 0)}
     ALLOWED = frozenset("_~абвгдеёжзийклмнопрстуфхцчшщъыьэюя +.,!?…:;–")
     LATIN = frozenset("abcdefghijklmnopqrstuvwxyz")
     TRANSLIT_MAP = {'ough':'о','augh':'о','eigh':'эй','igh':'ай','tion':'шн','shch':'щ','tch':'ч','sch':'ск','scr':'скр','thr':'зр','squ':'скв','ear':'ир','air':'эр','are':'эр','the':'зэ','and':'энд','ea':'и','ee':'и','oo':'у','ai':'эй','ay':'эй','ei':'эй','ey':'эй','oi':'ой','oy':'ой','ou':'ау','ow':'ау','au':'о','aw':'о','ie':'и','ui':'у','ue':'ю','uo':'уо','eu':'ю','ew':'ю','oa':'о','oe':'о','sh':'ш','ch':'ч','zh':'ж','th':'з','kh':'х','ti':'тай','ts':'ц','ph':'ф','wh':'в','gh':'г','qu':'кв','gu':'г','dg':'дж','ce':'це','ci':'си','cy':'си','ck':'к','ge':'дж','gi':'джи','gy':'джи','er':'эр','a':'а','b':'б','c':'к','d':'д','e':'е','f':'ф','g':'г','h':'х','i':'и','j':'дж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','q':'к','r':'р','s':'с','t':'т','u':'у','v':'в','w':'в','x':'кс','y':'й','z':'з'}
@@ -302,6 +305,7 @@ class TextProcessor:
             node = node[text[j]]; j += 1
             if '_' in node: best, best_pos = node['_'], j
         return (best_pos, best) if best else (pos + 1, text[pos] if text[pos] in self.ALLOWED else " ")
+    
     def _wrap(self, txt: str, end_punct: str) -> str:
         if not txt: return ""
         def attrs(rate, pitch): return f'rate="{rate}%" pitch="{pitch}"'
@@ -426,6 +430,23 @@ class HTTPServer:
         self.app = Bottle()
         self.tts_service = tts_service
         self._setup_routes()
+        self._setup_cors()
+    
+    def _setup_cors(self):
+        # Добавляем CORS заголовки для всех ответов
+        @self.app.hook('after_request')
+        def enable_cors():
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With'
+            response.headers['Access-Control-Max-Age'] = '86400'
+        
+        # Обработка OPTIONS запросов для CORS preflight
+        @self.app.route('/voice/speakers', method='OPTIONS')
+        @self.app.route('/voice/vits', method='OPTIONS')
+        def options_handler():
+            response.status = 200
+            return ''
     
     def _setup_routes(self):
         @self.app.route('/voice/speakers', method='GET')
@@ -448,14 +469,16 @@ class HTTPServer:
             try:
                 audio_data = self.tts_service.synthesize_speech(text, speaker_id, length, pitch)
                 response.content_type = 'audio/wav'
+                response.headers['Content-Length'] = str(len(audio_data))
                 return audio_data
             except Exception as e:
                 print(f"[ERROR] Synthesis failed: {e}")
                 response.status = 500
-                return {"error": str(e)}
+                response.content_type = 'text/plain'
+                return str(e)
     
     def run(self, host: str, port: int):
-        run(self.app, host=host, port=port, quiet=True)
+        run(self.app, host=host, port=port, quiet=True, server='auto')
 
 
 class Application:
@@ -492,6 +515,7 @@ class Application:
         num_to_words.cache_clear()
         threading.Timer(1.0, lambda: os._exit(0)).start()
         print("[INFO] Application stopped successfully")
+        sys.exit(0)
     
     def run(self):
         self.initialize()
@@ -508,10 +532,9 @@ class Application:
         
         try:
             self.http_server.run(Config.HOST, Config.PORT)
-        except KeyboardInterrupt:
-            self.stop()
         except Exception as e:
             print(f"[ERROR] Server error: {e}")
+        finally:
             self.stop()
 
 if __name__ == "__main__":

@@ -1,0 +1,557 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="ru">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Silero TTS Server Simple Tester</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+            padding: 8px;
+            background: #C0C0C0;
+            font-family: 'Courier New', Courier, 'Times New Roman', serif;
+            font-size: 12px;
+        }
+        .box {
+            background: #E0E0E0;
+            border: 2px solid #000000;
+            padding: 8px;
+            margin: 0 auto;
+            width: 95%;
+            max-width: 550px;
+        }
+        h1 {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 0 0 8px 0;
+            padding: 0 0 4px 0;
+            border-bottom: 1px solid #000000;
+            color: #000000;
+            background: #E0E0E0;
+        }
+        hr {
+            color: #000000;
+            background: #000000;
+            height: 1px;
+            border: none;
+            margin: 6px 0;
+        }
+        label {
+            font-weight: bold;
+        }
+        .row {
+            margin-bottom: 8px;
+            clear: both;
+        }
+        .server-box {
+            background: #D0D0D0;
+            border: 1px solid #000000;
+            padding: 4px;
+            margin-bottom: 8px;
+        }
+        .two-cols {
+            width: 100%;
+            margin-bottom: 8px;
+        }
+        .two-cols td {
+            vertical-align: top;
+            padding: 0 4px 0 0;
+        }
+        .param-panel {
+            border: 1px solid #000000;
+            background: #D4D0C8;
+            padding: 4px;
+        }
+        .speaker-panel {
+            border: 1px solid #000000;
+            background: #D4D0C8;
+            padding: 4px;
+        }
+        .speaker-item {
+            margin-bottom: 4px;
+        }
+        .speaker-item input {
+            margin: 0 4px 0 0;
+        }
+        .param-row {
+            margin-bottom: 6px;
+            clear: both;
+        }
+        .param-label {
+            display: inline-block;
+            width: 45px;
+            font-weight: bold;
+        }
+        .spin-group {
+            display: inline-block;
+            white-space: nowrap;
+        }
+        .spin-group button {
+            width: 22px;
+            font-size: 14px;
+            font-weight: bold;
+            background: #E0E0E0;
+            border: 1px solid #000000;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+        }
+        .spin-group input {
+            width: 50px;
+            text-align: center;
+            background: #FFFFFF;
+            border: 1px solid #000000;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .text-input {
+            width: 100%;
+            border: 1px solid #000000;
+            background: #FFFFFF;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 2px;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .big-btn {
+            flex: 1;
+            background: #C0C0C0;
+            border: 2px solid #FFFFFF;
+            border-color: #FFFFFF #808080 #808080 #FFFFFF;
+            padding: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+        }
+        .big-btn:active {
+            border-color: #808080 #FFFFFF #FFFFFF #808080;
+        }
+        .url-box {
+            background: #D4D0C8;
+            border: 1px solid #000000;
+            padding: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            word-break: break-all;
+            margin-bottom: 8px;
+        }
+        .info {
+            font-size: 10px;
+            color: #333333;
+            text-align: center;
+            margin-top: 6px;
+        }
+        .value-tip {
+            font-size: 10px;
+            color: #0000AA;
+            margin-left: 6px;
+        }
+        fieldset {
+            border: 1px solid #000000;
+            margin: 0 0 6px 0;
+            padding: 4px;
+        }
+        legend {
+            font-weight: bold;
+            background: #C0C0C0;
+            padding: 0 4px;
+        }
+        input, textarea, button {
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .inline-hint {
+            font-size: 10px;
+            color: #333333;
+            margin-top: 4px;
+        }
+        .example-radio-group {
+            margin: 8px 0 0 0;
+            padding: 4px 0;
+            border-top: 1px dotted #808080;
+        }
+        .example-radio-group label {
+            font-weight: normal;
+            margin-right: 12px;
+            white-space: nowrap;
+        }
+        .example-radio-group input {
+            margin: 0 2px 0 0;
+            vertical-align: middle;
+        }
+        audio {
+            width: 100%;
+            margin-top: 8px;
+            display: none;
+        }
+        .status-msg {
+            margin: 8px 0;
+            padding: 4px;
+            background: #FFFFCC;
+            border: 1px solid #000000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>Silero TTS Real-time Server Simple Tester</h1>
+
+    <div class="server-box">
+        <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+                <td width="45"><label>URL:</label></td>
+                <td><input type="text" id="server-url" value="http://127.0.0.1:23456" style="width: 100%; background: #FFFFFF; border: 1px solid #000000;" /></td>
+            </tr>
+        </table>
+    </div>
+
+    <table class="two-cols" cellpadding="0" cellspacing="0" width="100%">
+        <tr>
+            <td width="50%" style="padding-right: 6px;">
+                <div class="speaker-panel">
+                    <div style="font-weight: bold; margin-bottom: 6px;">Голоса</div>
+                    <div id="speaker-options">
+                    </div>
+                </div>
+            </td>
+            <td width="50%">
+                <div class="param-panel">
+                    <div style="font-weight: bold; margin-bottom: 6px;">Параметры</div>
+                    <div class="param-row">
+                        <span class="param-label">speed:</span>
+                        <div class="spin-group">
+                            <button type="button" id="speed-minus">-</button>
+                            <input type="text" id="speed" value="0.0" readonly size="5">
+                            <button type="button" id="speed-plus">+</button>
+                        </div>
+                        <span class="value-tip">-10..10</span>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">pitch:</span>
+                        <div class="spin-group">
+                            <button type="button" id="pitch-minus">-</button>
+                            <input type="text" id="pitch" value="0.0" readonly size="5">
+                            <button type="button" id="pitch-plus">+</button>
+                        </div>
+                        <span class="value-tip">-10..10</span>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <div class="row" style="margin-top: 8px;">
+        <label>Текст</label><br/>
+        <textarea id="text" rows="3" class="text-input">Привет! Тестовый текст можно выбрать из примеров ниже.</textarea>
+    </div>
+
+    <div class="example-radio-group">
+        <label><input type="radio" name="example" value="1"> Пример 1</label>
+        <label><input type="radio" name="example" value="2"> Пример 2</label>
+        <label><input type="radio" name="example" value="3"> Пример 3</label>
+        <label><input type="radio" name="example" value="4"> Пример 4</label>
+        <label><input type="radio" name="example" value="5"> Пример 5</label>
+    </div>
+
+    <div class="btn-group">
+        <button type="button" id="play-btn" class="big-btn">ВОСПРОИЗВЕСТИ</button>
+        <button type="button" id="open-btn" class="big-btn">СОХРАНИТЬ КАК WAV</button>
+    </div>
+
+    <div id="status-msg" class="status-msg"></div>
+    <audio id="audio-player" controls></audio>
+    <div class="url-box" id="url-preview">заполните текст и URL</div>
+</div>
+
+<script type="text/javascript">
+    var SPEAKERS = [
+        { id: 0, name: "aidar", display: "0 aidar   M" },
+        { id: 1, name: "baya", display: "1 baya    F" },
+        { id: 2, name: "kseniya", display: "2 kseniya F" },
+        { id: 3, name: "xenia", display: "3 xenia   F" },
+        { id: 4, name: "eugene", display: "4 eugene  M" }
+    ];
+    
+    var speedValue = 0.0;
+    var pitchValue = 0.0;
+    var serverUrlInput = document.getElementById('server-url');
+    var textarea = document.getElementById('text');
+    var openBtn = document.getElementById('open-btn');
+    var playBtn = document.getElementById('play-btn');
+    var urlPreviewDiv = document.getElementById('url-preview');
+    var speedInput = document.getElementById('speed');
+    var pitchInput = document.getElementById('pitch');
+    var speedMinus = document.getElementById('speed-minus');
+    var speedPlus = document.getElementById('speed-plus');
+    var pitchMinus = document.getElementById('pitch-minus');
+    var pitchPlus = document.getElementById('pitch-plus');
+    var statusMsg = document.getElementById('status-msg');
+    var audioPlayer = document.getElementById('audio-player');
+    
+    var exampleTexts = {
+        "1": "Мышка сушек насушила, мышка мышек пригласила, мышки сушки кушать стали, зубки сразу же сломали.",
+        "2": "Ехал Грека через реку, видит Грека — в реке рак. Сунул Грека руку в реку, рак за руку Греку — цап!",
+        "3": "Что? Не может быть! Да это же просто великолепно... Ой, подожди, я ошибся.",
+        "4": "Он установил Windows 11, запустил файл test_v5.mp3 и переключился на Wi-Fi 6.",
+        "5": "Ты купил молоко, хлеб, масло и сыр или только кефир?"
+    };
+    
+    function showStatus(msg, isError) {
+        statusMsg.innerHTML = msg;
+        statusMsg.style.display = 'block';
+        statusMsg.style.background = isError ? '#FFCCCC' : '#CCFFCC';
+        setTimeout(function() {
+            statusMsg.style.display = 'none';
+        }, 3000);
+    }
+    
+    function renderSpeakers() {
+        var container = document.getElementById('speaker-options');
+        if (!container) return;
+        var html = '';
+        for (var i = 0; i < SPEAKERS.length; i++) {
+            var spk = SPEAKERS[i];
+            var checkedAttr = (i === 0) ? ' checked="checked"' : '';
+            html += '<div class="speaker-item">' +
+                    '<input type="radio" name="speaker" id="spk_' + spk.id + '" value="' + spk.id + '"' + checkedAttr + ' />' +
+                    '<label for="spk_' + spk.id + '"> ' + spk.display + '</label>' +
+                    '</div>';
+        }
+        container.innerHTML = html;
+        
+        var radios = document.getElementsByName('speaker');
+        for (var r = 0; r < radios.length; r++) {
+            radios[r].onclick = function() { updateUrlPreview(); };
+        }
+    }
+    
+    function getSelectedSpeakerId() {
+        var radios = document.getElementsByName('speaker');
+        for (var i = 0; i < radios.length; i++) {
+            if (radios[i].checked) {
+                return parseInt(radios[i].value, 10);
+            }
+        }
+        return 0;
+    }
+    
+    function updateSpeedUI() {
+        var rounded = Math.round(speedValue * 10) / 10;
+        speedInput.value = rounded.toFixed(1);
+        updateUrlPreview();
+    }
+    
+    function clampSpeed(val) {
+        if (val < -10) return -10;
+        if (val > 10) return 10;
+        return val;
+    }
+    
+    function changeSpeed(delta) {
+        var newSpeed = speedValue + delta;
+        newSpeed = Math.round(newSpeed * 10) / 10;
+        speedValue = clampSpeed(newSpeed);
+        updateSpeedUI();
+    }
+    
+    function updatePitchUI() {
+        var rounded = Math.round(pitchValue * 10) / 10;
+        pitchInput.value = rounded.toFixed(1);
+        updateUrlPreview();
+    }
+    
+    function clampPitch(val) {
+        if (val < -10) return -10;
+        if (val > 10) return 10;
+        return val;
+    }
+    
+    function changePitch(delta) {
+        var newPitch = pitchValue + delta;
+        newPitch = Math.round(newPitch * 10) / 10;
+        pitchValue = clampPitch(newPitch);
+        updatePitchUI();
+    }
+    
+    function buildRequestUrl() {
+        var server = serverUrlInput.value;
+        var text = textarea.value;
+        if (!server || !text) return null;
+        server = server.replace(/^\s+|\s+$/g, '');
+        text = text.replace(/^\s+|\s+$/g, '');
+        if (server === '' || text === '') return null;
+        
+        var speakerId = getSelectedSpeakerId();
+        var lengthParam;
+		if (speedValue > 0) {
+			lengthParam = 1 - speedValue / 15;
+		} else {
+			lengthParam = 1 - speedValue / 5;
+		}
+        var pitchParam = pitchValue;
+        var url = server + '/voice/vits?';
+        url += 'text=' + encodeURIComponent(text);
+        url += '&id=' + encodeURIComponent(speakerId);
+        url += '&length=' + encodeURIComponent(lengthParam);
+        url += '&pitch=' + encodeURIComponent(pitchParam);
+        return url;
+    }
+    
+    function updateUrlPreview() {
+        var url = buildRequestUrl();
+        if (!url) {
+            urlPreviewDiv.innerHTML = '[X] Заполните текст и укажите URL сервера';
+            return;
+        }
+        urlPreviewDiv.innerHTML = url;
+    }
+    
+    function openInBrowser() {
+        var server = serverUrlInput.value;
+        var text = textarea.value;
+        if (!server) {
+            alert('Введите URL сервера (например http://127.0.0.1:23456)');
+            return;
+        }
+        if (!text) {
+            alert('Введите текст для синтеза');
+            return;
+        }
+        var url = buildRequestUrl();
+        if (!url) {
+            alert('Не удалось сформировать ссылку');
+            return;
+        }
+        // открываем в новом окне
+        window.open(url, '_blank');
+    }
+    
+    async function playAudio() {
+        var server = serverUrlInput.value;
+        var text = textarea.value;
+        if (!server) {
+            alert('Введите URL сервера (например http://127.0.0.1:23456)');
+            return;
+        }
+        if (!text) {
+            alert('Введите текст для синтеза');
+            return;
+        }
+        var url = buildRequestUrl();
+        if (!url) {
+            alert('Не удалось сформировать ссылку');
+            return;
+        }
+        
+        showStatus('Генерация и воспроизведение...', false);
+        playBtn.disabled = true;
+        openBtn.disabled = true;
+        
+        try {
+            var response = await fetch(url);
+            
+            if (!response.ok) {
+                var errorText = await response.text();
+                throw new Error('HTTP ' + response.status + ': ' + errorText);
+            }
+            
+            var blob = await response.blob();
+            var audioUrl = URL.createObjectURL(blob);
+            
+            audioPlayer.src = audioUrl;
+            audioPlayer.style.display = 'block';
+            
+            audioPlayer.onended = function() {
+                URL.revokeObjectURL(audioUrl);
+            };
+            
+            await audioPlayer.play();
+            showStatus('Воспроизведение началось', false);
+            
+        } catch (error) {
+            console.error('Error:', error);
+            showStatus('Ошибка: ' + error.message, true);
+        } finally {
+            playBtn.disabled = false;
+            openBtn.disabled = false;
+        }
+    }
+    
+    function saveServerUrlToCookie() {
+        var url = serverUrlInput.value;
+        if (url) {
+            document.cookie = 'tts_server_ie6=' + encodeURIComponent(url) + '; path=/';
+        }
+    }
+    
+    function loadServerUrlFromCookie() {
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+            var c = cookies[i];
+            while (c.charAt(0) === ' ') c = c.substring(1);
+            if (c.indexOf('tts_server_ie6=') === 0) {
+                var saved = decodeURIComponent(c.substring('tts_server_ie6='.length));
+                if (saved) serverUrlInput.value = saved;
+                break;
+            }
+        }
+    }
+    
+    function bindExampleRadios() {
+        var exampleRadios = document.querySelectorAll('input[name="example"]');
+        for (var i = 0; i < exampleRadios.length; i++) {
+            exampleRadios[i].onclick = function() {
+                var val = this.value;
+                if (exampleTexts[val]) {
+                    textarea.value = exampleTexts[val];
+                    updateUrlPreview();
+                }
+            };
+        }
+    }
+    
+    function bindEvents() {
+        speedMinus.onclick = function() { changeSpeed(-0.5); };
+        speedPlus.onclick = function() { changeSpeed(0.5); };
+        pitchMinus.onclick = function() { changePitch(-0.5); };
+        pitchPlus.onclick = function() { changePitch(0.5); };
+        
+        serverUrlInput.onkeyup = function() { updateUrlPreview(); };
+        serverUrlInput.onchange = function() { saveServerUrlToCookie(); updateUrlPreview(); };
+        textarea.onkeyup = function() { updateUrlPreview(); };
+        textarea.onchange = function() { updateUrlPreview(); };
+        openBtn.onclick = openInBrowser;
+        playBtn.onclick = playAudio;
+        
+        serverUrlInput.onblur = function() { updateUrlPreview(); };
+        textarea.onblur = function() { updateUrlPreview(); };
+        
+        bindExampleRadios();
+    }
+    
+    function init() {
+        renderSpeakers();
+        loadServerUrlFromCookie();
+        speedValue = 0.0;
+        pitchValue = 0.0;
+        updateSpeedUI();
+        updatePitchUI();
+        bindEvents();
+        updateUrlPreview();
+        
+        var infoDiv = document.createElement('div');
+        infoDiv.className = 'inline-hint';
+        infoDiv.style.marginTop = '6px';
+        infoDiv.style.borderTop = '1px solid #808080';
+        infoDiv.style.paddingTop = '4px';
+        var paramPanel = document.querySelector('.param-panel');
+        if(paramPanel) paramPanel.appendChild(infoDiv);
+    }
+    
+    window.onload = init;
+</script>
+</body>
+</html>
