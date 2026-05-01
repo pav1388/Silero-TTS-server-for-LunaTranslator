@@ -1,7 +1,7 @@
 # silero-tts-for-luna-translator.py
 # pav13
 
-import io, os, sys, time, struct, torch, psutil, numpy as np
+import os, sys, time, struct, torch, psutil, signal, gc, numpy as np
 from bottle import Bottle, request, response, run
 from num2words import num2words
 from urllib.parse import unquote
@@ -10,13 +10,8 @@ import threading
 
 # DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 DEBUG = True
-MAIN_VERSION = "0.3-dev"
+MAIN_VERSION = "0.3.2-dev"
 
-# ВРЕМЕННО ДЛЯ ТЕСТА
-SAVE_TEST_WAV = False #True
-TEST_WAV_PATH = "test_output.wav"
-_test_wav_buffer = None
-#################################
 
 class Config:
     """Конфигурация приложения"""
@@ -39,72 +34,80 @@ class Config:
 
 # Список доступных голосов и индивидуальных настроек
 SPEAKERS = [
-    # {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "volume_boost": 3,   "pitch": "high",   "base_speed": 1.1},
-    # {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "volume_boost": 0,   "pitch": "low",    "base_speed": 1.0},
-    # {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "volume_boost": 0,   "pitch": "low",    "base_speed": 1.0},
-    # {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "volume_boost": 1,   "pitch": "medium", "base_speed": 0.95},
-    # {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "volume_boost": 0.5, "pitch": "low",    "base_speed": 0.9},
-    
-    {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "volume_boost": 0,   "pitch": "high",   "base_speed": 1.2},
-    {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "volume_boost": 1.5,   "pitch": "low",    "base_speed": 1.0},
-    {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "volume_boost": 0,   "pitch": "medium",    "base_speed": 1.0},
-    {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "volume_boost": 0,   "pitch": "medium", "base_speed": 1.0},
-    {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "volume_boost": -1, "pitch": "high",    "base_speed": 0.9},
+    {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "vol_boost": 0,   "pitch": "high",   "base_speed": 1.2},
+    {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "vol_boost": 1.5,   "pitch": "low",    "base_speed": 1.0},
+    {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "vol_boost": 0,   "pitch": "medium",    "base_speed": 1.0},
+    {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "vol_boost": 0.5,   "pitch": "medium", "base_speed": 1.0},
+    {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "vol_boost": -1, "pitch": "high",    "base_speed": 0.87},
 ]
 
 
 class ModelLoader:
     """загрузка модели и инициализация torch"""
     @staticmethod
-    def setup_torch():
+    def setup_torch(device):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
-        if Config.DEVICE.type == 'cpu':
+        if device.type == 'cpu':
             try: 
                 cores = psutil.cpu_count(logical=False)
                 if cores is None: cores = os.cpu_count()
             except: 
                 cores = os.cpu_count()
+            if cores is None: cores = 1 
             n_threads = 2 if (cores and cores > 1) else 1
             torch.set_num_threads(n_threads)
             torch.set_num_interop_threads(1)
-            print(f"[INFO] CPU Threads set to: {n_threads} (Detected cores: {cores})")
+            print(f"[INFO] CPU Threads: {n_threads} | Detected cores: {cores}")
         
-        if Config.DEVICE.type == 'cuda':
+        if device.type == 'cuda':
             torch.cuda.set_device(0)
             torch.cuda.empty_cache()
-            print(f"[INFO] GPU: {torch.cuda.get_device_name(0)} | Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+            print(f"[INFO] GPU: {torch.cuda.get_device_name(0)} | Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     
     @staticmethod
-    def download_model():
+    def download_model(model_path: str):
         url = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
-        if not os.path.exists(Config.MODEL_PATH):
-            print(f"\n[!] Model not found: {Config.MODEL_PATH}")
-            os.makedirs(os.path.dirname(Config.MODEL_PATH), exist_ok=True)
+        if not os.path.exists(model_path):
+            print(f"\n[ERROR] Model not found: {model_path}")
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
             try:
                 import urllib.request
-                print(f"[*] Downloading v5_5_ru model...")
-                urllib.request.urlretrieve(url, Config.MODEL_PATH, 
+                print(f"[INFO] Downloading v5_5_ru.pt model...")
+                urllib.request.urlretrieve(url, model_path, 
                     lambda b, bs, ts: print(f"\r {int(b*bs*100/ts)}%", end=''))
-                print(f"\n[V] Model downloaded.")
+                print(f"\n[INFO] Model downloaded.")
             except Exception as e:
-                print(f"\n[X] Download failed: {e}")
+                print(f"\n[ERROR] Download failed: {e}")
                 print(f"\n Please download manually from: {url}")
-                input(f" and save as: {Config.MODEL_PATH}")
+                input(f" and save as: {model_path}")
                 sys.exit(1)
     
     @staticmethod
-    def load_model():
-        print(f"[*] Loading model '{Config.MODEL_PATH}'... ({Config.DEVICE})")
+    def load_model(model_path: str, device):
+        print(f"[INFO] Loading model '{model_path}'... ({device.type})")
         try:
-            package = torch.package.PackageImporter(Config.MODEL_PATH)
+            package = torch.package.PackageImporter(model_path)
             model = package.load_pickle("tts_models", "model")
-            model.to(Config.DEVICE)
+            model.to(device)
             return model
         except Exception as e:
-            print(f"[X] Failed to load model. File might be corrupted. Delete {Config.MODEL_PATH} and restart.")
+            print(f"[ERROR] Failed to load model. File might be corrupted. Delete {model_path} and restart.")
             raise e
 
+    @staticmethod
+    def unload_model(model, device):
+        if model is None: return
+        del model
+        
+        if device.type == 'cuda' and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+            print("[INFO] CUDA cache cleared")
+        
+        gc.collect()
+        print("[INFO] Model unloaded successfully")
 
 class CPUMonitor:
     """мониторинг загрузки CPU"""
@@ -116,7 +119,7 @@ class CPUMonitor:
         self.monitor_thread = None
         self.last_activity_time = 0
     
-    def start_monitoring(self):
+    def start(self):
         with self.lock:
             if self.running: return
             self.last_activity_time = time.time()
@@ -125,7 +128,7 @@ class CPUMonitor:
             self.monitor_thread.start()
             if DEBUG: print("[DEBUG] CPU monitoring ON")
     
-    def stop_monitoring(self):
+    def stop(self):
         with self.lock:
             if not self.running: return
             self.running = False
@@ -133,11 +136,11 @@ class CPUMonitor:
     
     def record_activity(self):
         self.last_activity_time = time.time()
-        if not self.running: self.start_monitoring()
+        if not self.running: self.start()
     
     def _check_idle_and_stop(self):
         if time.time() - self.last_activity_time >= Config.CPU_IDLE_TIMEOUT:
-            self.stop_monitoring()
+            self.stop()
             return True
         return False
     
@@ -188,11 +191,12 @@ class CPUMonitor:
 
 class TextProcessor:
     """обработка текста (SSML, числа, транслитерация)"""
-    pause1 = 320
-    pause2 = 180
-    pause3 = 215
-    pause4 = 130
-    BREAK_TIME_MAP = {'.': pause1, ',': pause2, '!': pause1, '?': pause1, '(': pause2, ')': pause2, '[': pause2, ']': pause2, ':': pause4, ';': pause3, '—': pause3}
+    pause0 = 130
+    pause1 = 180
+    pause2 = 215
+    pause3 = 320
+    pause4 = 420
+    BREAK_TIME_MAP = {'.': pause3, ',': pause1, '!': pause3, '?': pause3, '(': pause1, ')': pause1, '[': pause1, ']': pause1, ':': pause0, ';': pause2, '—': pause2, '…': pause4}
     # EMOTIONS = {'!': (112, 1), '?': (92, 1)}
     EMOTIONS = {'!': (100, 0), '?': (100, 0)}
     ALLOWED = frozenset("_~абвгдеёжзийклмнопрстуфхцчшщъыьэюя +.,!?…:;–")
@@ -220,12 +224,13 @@ class TextProcessor:
         except ValueError: return "medium"
 
     def process_text(self, text: str) -> str:
-        if not text: return ""
+        if not text: return "", 0
         len_text = len(text)
         if len_text > Config.MAX_TEXT_LENGTH:
             len_text = Config.MAX_TEXT_LENGTH
             text = text[:len_text]
-            if DEBUG: print(f"[DEBUG] Text length truncated to {len_text} chars.")
+            print(f"[INFO] Text length truncated to {len_text} chars.")
+        
         text = unquote(text).lower()
         has_latin = any(ch in self.LATIN for ch in text)
         return f'<speak>{self._proc(text, len_text, has_latin)}</speak>', len_text
@@ -235,22 +240,39 @@ class TextProcessor:
         while i < n:
             ch = text[i]
             if ch.isdigit():
-                i, p = self._num(text, i); buf.append(p); continue
+                i, p = self._num(text, i)
+                buf.append(p)
+                continue
             if has_latin and ch in self.LATIN:
                 ni, tr = self._trans(text, i)
-                if tr and tr != ch: buf.append(tr); i = ni; continue
+                if tr and tr != ch: buf.append(tr)
+                i = ni
+				
+				# word_start = i
+                # while i < n and text[i] in self.LATIN:
+                    # i += 1
+                # lat = text[word_start:i]
+                # cyr = translit(lat, 'ru')
+                # if cyr and cyr != lat: 
+                    # buf.append(cyr)
+                continue
             if ch in self.BREAK_TIME_MAP:
                 s = ''.join(buf).strip()
                 if s:
                     keep = ch in self.EMOTIONS
                     res.append(self._wrap(s + (ch if keep else ""), ch))
                 res.append(f'<break time="{self.BREAK_TIME_MAP[ch]}ms"/>')
-                buf.clear(); i += 1; continue
+                buf.clear()
+                i += 1
+                continue
             if ch.isspace() or ch == ' ':
                 if not buf or buf[-1] != ' ': buf.append(' ')
-                i += 1; continue
+                i += 1
+                continue
             if ch in self.ALLOWED:
-                buf.append(ch); i += 1; continue
+                buf.append(ch)
+                i += 1
+                continue
             if not (buf and buf[-1] == ' '): buf.append(' ')
             i += 1
         if buf:
@@ -280,7 +302,6 @@ class TextProcessor:
             node = node[text[j]]; j += 1
             if '_' in node: best, best_pos = node['_'], j
         return (best_pos, best) if best else (pos + 1, text[pos] if text[pos] in self.ALLOWED else " ")
-
     def _wrap(self, txt: str, end_punct: str) -> str:
         if not txt: return ""
         def attrs(rate, pitch): return f'rate="{rate}%" pitch="{pitch}"'
@@ -310,6 +331,8 @@ class AudioSynthesizer:
         self.model = model
         self.device = device
         self.cpu_monitor = cpu_monitor
+        self.inference_count = 0
+        self.clean_cuda_every = 50 
 
     def _to_wav(self, t, sr):
         d = t.detach().cpu().numpy().squeeze()
@@ -321,22 +344,29 @@ class AudioSynthesizer:
         hdr += b'data' + struct.pack('<I', sz)
         return hdr + raw
 
-    def synthesize(self, ssml: str, speaker_name: str, sample_rate: int, put_accent: bool, put_yo: bool, volume_boost: float) -> bytes:
-        with torch.no_grad():
-            if DEBUG and self.device.type == 'cuda':
-                torch.cuda.synchronize()
-            audio = self.model.apply_tts(
-                ssml_text=ssml, 
-                speaker=speaker_name, 
-                sample_rate=sample_rate, 
-                put_accent=put_accent, 
-                put_yo=put_yo
-            )
+    def synthesize(self, ssml: str, speaker_name: str, sample_rate: int, put_accent: bool, put_yo: bool, vol_boost: float) -> bytes:
+        try:
+            with torch.no_grad():
+                if DEBUG and self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+            
+                audio = self.model.apply_tts(
+                    ssml_text=ssml, speaker=speaker_name, sample_rate=sample_rate, 
+                    put_accent=put_accent, put_yo=put_yo)
+            
+                if self.device.type == 'cuda':
+                    self.inference_count += 1
+                    if self.inference_count >= self.clean_cuda_every:
+                        torch.cuda.empty_cache()
+                        self.inference_count = 0
+
+        except Exception as e:
+            raise RuntimeError(f"Model inference failed: {str(e)}")
         
         if audio.dim() == 1: 
             audio = audio.unsqueeze(0)
-        if volume_boost != 0:
-            audio = torch.clamp(audio * (10 ** (volume_boost / 20.0)), -1.0, 1.0)
+        if vol_boost != 0:
+            audio = torch.clamp(audio * (10 ** (vol_boost / 20.0)), -1.0, 1.0)
 
         wav_bytes = self._to_wav(audio, sample_rate)
         del audio
@@ -350,7 +380,7 @@ class TTSService:
         self.audio_synthesizer = AudioSynthesizer(model, device, cpu_monitor)
         self.cpu_monitor = cpu_monitor
     
-    def synthesize_speech(self, text: str, speaker_id: int, length: float, pitch_adj: int) -> bytes:
+    def synthesize_speech(self, text: str, speaker_id: int, length: float, pitch_adj: float) -> bytes:
         t_start = time.time() if DEBUG else None
         
         if not (0 <= speaker_id < len(SPEAKERS)): 
@@ -378,7 +408,7 @@ class TTSService:
         wav_bytes = self.audio_synthesizer.synthesize(
             ssml, spk['name'], sr, 
             q['put_accent'], q['put_yo'], 
-            spk['volume_boost']
+            spk['vol_boost']
         )
         
         if DEBUG and t_start:
@@ -408,34 +438,21 @@ class HTTPServer:
         def synthesize():
             text, speaker_id = request.query.text or "", int(request.query.id or 0)
             length, pitch = float(request.query.length or 1.0), float(request.query.pitch or 0)
+            
             if not text: 
-                return {"error": "Text is required"}, 400
-            print(f"[HTTP] New text request.")
+                response.status = 400
+                return {"error": "Text is required"}
+            
+            print(f"[HTTP] New request: ID={speaker_id}")
+            
             try:
                 audio_data = self.tts_service.synthesize_speech(text, speaker_id, length, pitch)
                 response.content_type = 'audio/wav'
-                
-                # ВРЕМЕННО ДЛЯ ТЕСТА
-                if SAVE_TEST_WAV:
-                    global _test_wav_buffer, _test_sample_rate
-                    if _test_wav_buffer is None:
-                        _test_wav_buffer = audio_data
-                        _test_sample_rate = struct.unpack('<I', audio_data[24:28])[0]
-                    else:
-                        _test_wav_buffer = _test_wav_buffer + audio_data[44:]
-                    total_samples = len(_test_wav_buffer) - 44
-                    fixed_header = (_test_wav_buffer[:40] + 
-                                    struct.pack('<I', total_samples) + 
-                                    _test_wav_buffer[44:])
-                    with open(TEST_WAV_PATH, 'wb') as f:
-                        f.write(fixed_header)
-                    print(f"[TEST] Saved to {TEST_WAV_PATH} ({len(_test_wav_buffer)} bytes total, {total_samples} samples)")
-                #########################################
-                    
                 return audio_data
             except Exception as e:
-                print(f"[X] Synthesis failed: {e}")
-                return {"error": str(e)}, 500
+                print(f"[ERROR] Synthesis failed: {e}")
+                response.status = 500
+                return {"error": str(e)}
     
     def run(self, host: str, port: int):
         run(self.app, host=host, port=port, quiet=True)
@@ -449,18 +466,37 @@ class Application:
         self.cpu_monitor = None
         self.tts_service = None
         self.http_server = None
+        self.running = None
     
     def initialize(self):
-        ModelLoader.download_model()
-        ModelLoader.setup_torch()
+        ModelLoader.download_model(Config.MODEL_PATH)
+        ModelLoader.setup_torch(Config.DEVICE)
         
-        self.model = ModelLoader.load_model()
+        self.model = ModelLoader.load_model(Config.MODEL_PATH, Config.DEVICE)
         self.cpu_monitor = CPUMonitor()
         self.tts_service = TTSService(self.model, Config.DEVICE, self.cpu_monitor)
         self.http_server = HTTPServer(self.tts_service)
     
+    def stop(self, signum=None, frame=None):
+        if self.running is False: return
+        self.running = False
+        print("\n[INFO] Stopping application...")
+        
+        if self.cpu_monitor:
+            self.cpu_monitor.stop()
+        
+        if self.model:
+            ModelLoader.unload_model(self.model, Config.DEVICE)
+            self.model = None
+        
+        num_to_words.cache_clear()
+        threading.Timer(1.0, lambda: os._exit(0)).start()
+        print("[INFO] Application stopped successfully")
+    
     def run(self):
         self.initialize()
+        signal.signal(signal.SIGINT, self.stop)
+        signal.signal(signal.SIGTERM, self.stop)
         
         print('=' * 60)
         print(f" Silero TTS Server for LunaTranslator v{MAIN_VERSION}")
@@ -468,9 +504,15 @@ class Application:
         if DEBUG: print(" DEBUG mode ON")
         print('=' * 60)
         print("Press Ctrl-C to quit.")
+        self.running = True
         
-        self.http_server.run(Config.HOST, Config.PORT)
-
+        try:
+            self.http_server.run(Config.HOST, Config.PORT)
+        except KeyboardInterrupt:
+            self.stop()
+        except Exception as e:
+            print(f"[ERROR] Server error: {e}")
+            self.stop()
 
 if __name__ == "__main__":
     Application().run()

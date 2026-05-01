@@ -1,4 +1,4 @@
-models/v5_5_ru.pt
+models/*.pt
 backup/
 todo.txt
 
