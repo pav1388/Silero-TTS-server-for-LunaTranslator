@@ -25,6 +25,7 @@ rename dist "%RELEASE_DIR%"
 xcopy "models\v5_5_ru.pt" "%RELEASE_DIR%\%FOLDERNAME%\models\" /I >nul 2>nul
 xcopy "README.md" "%RELEASE_DIR%\%FOLDERNAME%\" >nul 2>nul
 xcopy "vitsSimpleAPI_fix\*" "%RELEASE_DIR%\%FOLDERNAME%\vitsSimpleAPI_fix\" /E /I >nul 2>nul
+xcopy "tts-server-simple-tester.html" "%RELEASE_DIR%\%FOLDERNAME%\" /E /I >nul 2>nul
 
 rmdir /s /q build __pycache__ 2>nul
 del /s /q *.pyc *.spec *.manifest 2>nul

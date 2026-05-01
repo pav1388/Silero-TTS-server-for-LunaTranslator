@@ -433,7 +433,6 @@ class HTTPServer:
         self._setup_cors()
     
     def _setup_cors(self):
-        # Добавляем CORS заголовки для всех ответов
         @self.app.hook('after_request')
         def enable_cors():
             response.headers['Access-Control-Allow-Origin'] = '*'
@@ -441,7 +440,6 @@ class HTTPServer:
             response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With'
             response.headers['Access-Control-Max-Age'] = '86400'
         
-        # Обработка OPTIONS запросов для CORS preflight
         @self.app.route('/voice/speakers', method='OPTIONS')
         @self.app.route('/voice/vits', method='OPTIONS')
         def options_handler():
