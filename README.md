@@ -1,15 +1,13 @@
-WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](https://drive.google.com/file/d/1yBYmxAb43OktS8t_-VyOr0bL8weJpiJY/view?usp=sharing)
+WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](https://drive.google.com/file/d/1yBYmxAb43OktS8t_-VyOr0bL8weJpiJY/view?usp=sharing) - обновляемая ссылка
 
 Обсуждение - [Luna Translator на форуме 4PDA](https://4pda.to/forum/index.php?showtopic=1100472)
 
 # Silero TTS Server
 Сервер синтеза речи на базе модели Silero TTS v5_5_ru.
 
-Данная версия сервера является доработкой решения Виктора Шацкова (ноябрь 2025 г.) и включает оптимизации, поддержку транслитерации латиницы.
-
 ## Особенности
 
-- **Качество голоса:** Используется модель Silero v5_5_ru. Голоса максимально выровнены по звучанию.
+- **Качество голоса:** Используется модель Silero v5_5_ru. Голоса выровнены по звучанию.
 - **Поддержка языков:** Корректное чтение русского текста, числовых значений.
 - **Транслитерация:** Добавлена автоматическая транслитерация латиницы. Возможность читать английский текст.
 - **Производительность:** Оптимизирована текстовая обработка. Снижение качества генерируемого голоса при высокой нагрузке на CPU. Возможность вычислений на GPU Nvidia (CUDA) вместо CPU (по умолчанию используется CPU).
@@ -21,6 +19,8 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 - **Штакет:** За базовый скрипт и исходные материалы [Youtube](https://www.youtube.com/watch?v=r7eI_gON3X0).
 - **Виктор Шацков:** За адаптацию голосов [Youtube](https://www.youtube.com/watch?v=JGq7Xxvr5oI).
 
+Является продолжением идей Виктора Шацкова (ноябрь 2025).
+
 ## Требования
 
 - Python 3.8.10 x64 для WIN7+
@@ -28,13 +28,11 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 
 ## Установка
 
-1.1 Установите Python 3.8.10 с [официального сайта](https://www.python.org/downloads/release/python-3810/).
-
-1.2 Установите Python 3.11.9 с [официального сайта](https://www.python.org/downloads/release/python-3119/).
+1. Установите [Python 3.8.10](https://www.python.org/downloads/release/python-3810/) или [Python 3.11.9](https://www.python.org/downloads/release/python-3119/).
 
 2. Установите необходимые зависимости:
    ```bash
-   pip install numpy psutil bottle num2words
+   pip install numpy psutil bottle num2words gc signal
    ```
 
 3. Установите PyTorch в зависимости от используемого оборудования:
@@ -44,7 +42,7 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    ```
 
-   **Для GPU Nvidia CUDA (размер пакета ~2.8 Гб, требует ~5 Гб места после распаковки):**
+   **Для GPU Nvidia CUDA (размер пакета ~2.8 Гб, поддержка CPU так же включена в пакет):**
    ```bash
    pip install torch --index-url https://download.pytorch.org/whl/cu118
    ```
@@ -66,6 +64,10 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 4. Остальные параметры удалите, нажав на крестики справа.
 5. Если надо чтобы настройка Pitch тоже передавалась на сервер (помимо Speed), то используйте исправление из папки `vitsSimpleAPI_fix`.
 
-## Запуск
+## Запуск сервера
 
-Запустите файл `silero-tts-for-luna-translator.py`.
+Откройте файл silero-tts-for-luna-translator.py`.
+
+## Тесты и отладка
+
+Откройте `tts-server-simple-tester.html`, простой HTML интерфейс имитирующий запросы от LunaTranslator.
