@@ -478,7 +478,7 @@ class HTTPServer:
                 return str(e)
     
     def run(self, host: str, port: int):
-        run(self.app, host=host, port=port, quiet=True, server='auto')
+        run(self.app, host=host, port=port, quiet=True, server='wsgiref')
 
 
 class Application:
