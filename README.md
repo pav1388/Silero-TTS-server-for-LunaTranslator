@@ -54,6 +54,7 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 1. Создайте папку `models` в директории рядом с файлом `silero-tts-for-luna-translator.py`.
 2. Скачайте основную модель (v5_5_ru, ~140 Мб) и поместите её в папку `models`:
    - [Ссылка на модель v5_5_ru.pt](https://models.silero.ai/models/tts/ru/v5_5_ru.pt)
+   - или программа сама скачает модель в случае её отсутствия при запуске
 3. Другие доступные модели можно найти в [репозитории Silero](https://models.silero.ai/models/tts/ru/).
 
 ## Интеграция с Luna Translator
