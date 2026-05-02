@@ -203,7 +203,7 @@
         <table width="100%" cellpadding="0" cellspacing="0">
             <tr>
                 <td width="45"><label>URL:</label></td>
-                <td><input type="text" id="server-url" value="http://127.0.0.1:23456" style="width: 100%; background: #FFFFFF; border: 1px solid #000000;" /></td>
+                <td><input type="text" id="server-url" value="http://127.0.0.1:23456" style="width: 99%; background: #FFFFFF; border: 1px solid #000000;" /></td>
             </tr>
         </table>
     </div>
@@ -221,7 +221,7 @@
                 <div class="param-panel">
                     <div style="font-weight: bold; margin-bottom: 6px;">Параметры</div>
                     <div class="param-row">
-                        <span class="param-label">speed:</span>
+                        <span class="param-label">Speed:</span>
                         <div class="spin-group">
                             <button type="button" id="speed-minus">-</button>
                             <input type="text" id="speed" value="0.0" readonly size="5">
@@ -230,7 +230,7 @@
                         <span class="value-tip">-10..10</span>
                     </div>
                     <div class="param-row">
-                        <span class="param-label">pitch:</span>
+                        <span class="param-label">Pitch:</span>
                         <div class="spin-group">
                             <button type="button" id="pitch-minus">-</button>
                             <input type="text" id="pitch" value="0.0" readonly size="5">
@@ -243,12 +243,12 @@
         </tr>
     </table>
 
-    <div class="row" style="margin-top: 8px;">
+    <div class="row" style="margin-top: 5px;">
         <label>Текст</label><br/>
-        <textarea id="text" rows="3" class="text-input">Привет! Тестовый текст можно выбрать из примеров ниже.</textarea>
+        <textarea id="text" rows="3" class="text-input">Привет! Тестовый текст можно выбрать из примеров ниже или написать свой.</textarea>
     </div>
 
-    <div class="example-radio-group">
+    <div class="example-radio-group" style="margin-top: 5px;">
         <label><input type="radio" name="example" value="1"> Пример 1</label>
         <label><input type="radio" name="example" value="2"> Пример 2</label>
         <label><input type="radio" name="example" value="3"> Пример 3</label>
@@ -256,7 +256,7 @@
         <label><input type="radio" name="example" value="5"> Пример 5</label>
     </div>
 
-    <div class="btn-group">
+    <div class="btn-group" style="margin-top: 5px;">
         <button type="button" id="play-btn" class="big-btn">ВОСПРОИЗВЕСТИ</button>
         <button type="button" id="open-btn" class="big-btn">СОХРАНИТЬ КАК WAV</button>
     </div>
@@ -268,11 +268,11 @@
 
 <script type="text/javascript">
     var SPEAKERS = [
-        { id: 0, name: "aidar", display: "0 aidar   M" },
-        { id: 1, name: "baya", display: "1 baya    F" },
-        { id: 2, name: "kseniya", display: "2 kseniya F" },
-        { id: 3, name: "xenia", display: "3 xenia   F" },
-        { id: 4, name: "eugene", display: "4 eugene  M" }
+        { id: 0, name: "aidar", display: "0 aidar M ru" },
+        { id: 1, name: "baya", display: "1 baya F ru" },
+        { id: 2, name: "kseniya", display: "2 kseniya F ru" },
+        { id: 3, name: "xenia", display: "3 xenia F ru" },
+        { id: 4, name: "eugene", display: "4 eugene M ru" }
     ];
     
     var speedValue = 0.0;
@@ -296,16 +296,13 @@
         "2": "Ехал Грека через реку, видит Грека — в реке рак. Сунул Грека руку в реку, рак за руку Греку — цап!",
         "3": "Что? Не может быть! Да это же просто великолепно... Ой, подожди, я ошибся.",
         "4": "Он установил Windows 11, запустил файл test_v5.mp3 и переключился на Wi-Fi 6.",
-        "5": "Ты купил молоко, хлеб, масло и сыр или только кефир?"
+        "5": "Hello World! 123.456 тест-драйв... что будет? (может быть) [или нет] 1/2 круга & 5% скидка. Ough! Augh! Eigh! Tion. Shch! Ugh... 3.14159 — это Пи. Эй, ты! Как дела?; Хорошо: отлично. Привет @user#1! $100.99 & €50.50... Что если 3.14159265 * 2 = 6.2831853? (Скобки [внутри {других}]) — это сложно! Hello World -> Привет Мир. Tschüss! Café résumé. Naïve. 1/4 + 3/4 = 1. 50% off! Check: a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z. 0123456789. !@#$%^&*()_+-=[]{}|;':`~"
     };
     
     function showStatus(msg, isError) {
         statusMsg.innerHTML = msg;
         statusMsg.style.display = 'block';
         statusMsg.style.background = isError ? '#FFCCCC' : '#CCFFCC';
-        setTimeout(function() {
-            statusMsg.style.display = 'none';
-        }, 3000);
     }
     
     function renderSpeakers() {

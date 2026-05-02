@@ -1,21 +1,31 @@
 # silero-tts-for-luna-translator.py
-# pav13 - CORS FIX
+# pav13
 
-import os, sys, time, struct, torch, psutil, signal, gc, numpy as np
+import os, sys, time, ctypes, struct, psutil, signal, torch, numpy as np
 from bottle import Bottle, request, response, run, hook
 from num2words import num2words
 from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.4.2-dev"
+MAIN_VERSION = "0.4.3-dev"
 # DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 DEBUG = True
+
+# Список доступных голосов и индивидуальных подстроек
+SPEAKERS = [
+    {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "vol_boost": 0,   "pitch": "high",   "base_speed": 1.2},
+    {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "vol_boost": 1.5,   "pitch": "low",    "base_speed": 1.0},
+    {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "vol_boost": 0,   "pitch": "medium",    "base_speed": 1.0},
+    {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "vol_boost": 0.5,   "pitch": "medium", "base_speed": 1.0},
+    {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "vol_boost": -1, "pitch": "high",    "base_speed": 0.87},
+]
 
 
 class Config:
     """Конфигурация приложения"""
     MODEL_PATH = "models/v5_5_ru.pt"
+    URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
     TORCH_DEVICE = os.environ.get('TORCH_DEVICE', 'cpu').lower()
     if TORCH_DEVICE in ('cuda', 'gpu'):
         DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -34,17 +44,6 @@ class Config:
         {"sample_rate": 48000, "put_accent": True,  "put_yo": False, "name": "HIGH"},
         {"sample_rate": 48000, "put_accent": True,  "put_yo": True,  "name": "MAXIMUM"}
     ]
-
-
-# Список доступных голосов и индивидуальных настроек
-SPEAKERS = [
-    {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "vol_boost": 0,   "pitch": "high",   "base_speed": 1.2},
-    {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "vol_boost": 1.5,   "pitch": "low",    "base_speed": 1.0},
-    {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "vol_boost": 0,   "pitch": "medium",    "base_speed": 1.0},
-    {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "vol_boost": 0.5,   "pitch": "medium", "base_speed": 1.0},
-    {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "vol_boost": -1, "pitch": "high",    "base_speed": 0.87},
-]
-
 
 class ModelLoader:
     """загрузка модели и инициализация torch"""
@@ -71,19 +70,18 @@ class ModelLoader:
     
     @staticmethod
     def download_model(model_path: str):
-        url = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
         if not os.path.exists(model_path):
             print(f"\n[ERROR] Model not found: {model_path}")
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
             try:
                 import urllib.request
-                print(f"[INFO] Downloading v5_5_ru.pt model...")
-                urllib.request.urlretrieve(url, model_path, 
+                print(f"[INFO] Downloading model...")
+                urllib.request.urlretrieve(Config.URL, model_path, 
                     lambda b, bs, ts: print(f"\r {int(b*bs*100/ts)}%", end=''))
                 print(f"\n[INFO] Model downloaded.")
             except Exception as e:
                 print(f"\n[ERROR] Download failed: {e}")
-                print(f"\n Please download manually from: {url}")
+                print(f"\n Please download manually from: {Config.URL}")
                 input(f" and save as: {model_path}")
                 sys.exit(1)
     
@@ -110,7 +108,6 @@ class ModelLoader:
             torch.cuda.ipc_collect()
             print("[INFO] CUDA cache cleared")
         
-        gc.collect()
         print("[INFO] Model unloaded successfully")
 
 class CPUMonitor:
@@ -199,21 +196,21 @@ class TextProcessor:
     BREAK_TIME_MAP = {'.': pause4, ',': pause2, '!': pause4, '?': pause4, 
                       '(': pause2, ')': pause2, '[': pause2, ']': pause2, 
                       ':': pause1, ';': pause3, '—': pause3, '…': pause5}
-    EMOTIONS = {'!': (107, 0), '?': (93, 0)} # знак: (speed в %, pitch от -2 до 2)
+    EMOTIONS = {'!': (107, 0), '?': (93, 0)} # 'знак': (speed в %, pitch от -2 до 2)
     ALLOWED = frozenset("_~абвгдеёжзийклмнопрстуфхцчшщъыьэюя +.,!?…:;–")
     LATIN = frozenset("&%abcdefghijklmnopqrstuvwxyz")
     TRANSLIT_MAP = {'ough':'о','augh':'о','eigh':'эй','igh':'ай','tion':'шн','shch':'щ','ture': 'чер','sion': 'жн',
         'tch':'ч','sch':'ск','scr':'скр','thr':'тр','squ':'скв','ear':'ир','air':'эр','are':'эр','the':'зэ','and':'энд',
         'ea':'и','ee':'и','oo':'у','ai':'эй','ay':'эй','ei':'эй','ey':'эй','oi':'ой','oy':'ой','ou':'ау','ow':'ау','au':'о','aw':'о','ie':'и','ui':'у','ue':'ю','uo':'уо','eu':'ю','ew':'ю','oa':'о','oe':'о','sh':'ш','ch':'ч','zh':'ж','th':'з','kh':'х','ts':'ц','ph':'ф','wh':'в','gh':'г','qu':'кв','gu':'г','dg':'дж','ce':'це','ci':'си','cy':'си','ck':'к','ge':'дж','gi':'джи','gy':'джи','er':'эр',
-        '&':' и ', '%': ' процентов ', # это просто замены
+        '&':'и', '%': ' процентов', # это замены
         'a':'а','b':'б','c':'к','d':'д','e':'е','f':'ф','g':'г','h':'х','i':'и','j':'дж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','q':'к','r':'р','s':'с','t':'т','u':'у','v':'в','w':'в','x':'кс','y':'и','z':'з'}
 
     def __init__(self):
         self.base_speed = 1.0
         self.base_pitch = "medium"
-        self.trie = {}
+        self.transl_trie = {}
         for k, v in self.TRANSLIT_MAP.items():
-            node = self.trie
+            node = self.transl_trie
             for ch in k:
                 node = node.setdefault(ch, {})
             node['_'] = v
@@ -253,12 +250,10 @@ class TextProcessor:
                 if tr and tr != ch: buf.append(tr)
                 i = ni
 				# word_start = i
-                # while i < n and text[i] in self.LATIN:
-                    # i += 1
+                # while i < n and text[i] in self.LATIN: i += 1
                 # lat = text[word_start:i]
                 # cyr = translit(lat, 'ru')
-                # if cyr and cyr != lat: 
-                    # buf.append(cyr)
+                # if cyr: buf.append(cyr)
                 continue
             if ch in self.BREAK_TIME_MAP:
                 skip = 1
@@ -305,7 +300,7 @@ class TextProcessor:
         return i, num_to_words(num1)
 
     def _trans(self, text: str, pos: int) -> tuple:
-        node, best, best_pos = self.trie, None, pos
+        node, best, best_pos = self.transl_trie, None, pos
         j = pos
         while j < len(text) and text[j] in node:
             node = node[text[j]]; j += 1
@@ -330,7 +325,7 @@ class TextProcessor:
 
 @lru_cache(maxsize=512)
 def num_to_words(num: str) -> str:
-    """Преобразование чисел в слова"""
+    """преобразование чисел в слова"""
     if not num or not num.isdigit() or len(num) > 9: return str(num) if num else ""
     return num2words(int(num), lang='ru')
 
@@ -493,7 +488,7 @@ class Application:
         self.cpu_monitor = None
         self.tts_service = None
         self.http_server = None
-        self.running = None
+        self.running = False
     
     def initialize(self):
         ModelLoader.download_model(Config.MODEL_PATH)
@@ -505,33 +500,46 @@ class Application:
         self.http_server = HTTPServer(self.tts_service)
     
     def stop(self, signum=None, frame=None):
-        if self.running is False: return
+        if not self.running: return
         self.running = False
-        print("\n[INFO] Stopping application...")
         
         if self.cpu_monitor:
             self.cpu_monitor.stop()
         
         if self.model:
-            ModelLoader.unload_model(self.model, Config.DEVICE)
+            try:
+                ModelLoader.unload_model(self.model, Config.DEVICE)
+            except:
+                pass
             self.model = None
         
         num_to_words.cache_clear()
-        threading.Timer(1.0, lambda: os._exit(0)).start()
+        
+        def exit_now(): os._exit(0)
+        threading.Timer(1, exit_now).start()
         print("[INFO] Application stopped successfully")
-        sys.exit(0)
     
+    def _win_handler(self, dwCtrlType):
+        if dwCtrlType in [0, 2]:
+            self.stop()
+            return True
+        return False
+        
     def run(self):
         self.initialize()
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
         
+        if sys.platform == "win32":
+            kernel32 = ctypes.windll.kernel32
+            HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(self._win_handler)
+            kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
+            
         print('=' * 60)
         print(f" Silero TTS Server for LunaTranslator v{MAIN_VERSION}")
         print(f" Device: {str(Config.DEVICE).upper()} | http://{Config.HOST}:{Config.PORT}")
         if DEBUG: print(" DEBUG mode ON")
         print('=' * 60)
-        print("Press Ctrl-C to quit.")
         self.running = True
         
         try:
