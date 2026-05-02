@@ -8,7 +8,7 @@ from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.4.4-dev"
+MAIN_VERSION = "0.4.5-dev"
 # DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 DEBUG = True
 
@@ -87,7 +87,7 @@ class ModelLoader:
     
     @staticmethod
     def load_model(model_path: str, device):
-        print(f"[INFO] Loading model '{model_path}'... ({device.type})")
+        print(f"[INFO] Loading model '{model_path}'...")
         try:
             package = torch.package.PackageImporter(model_path)
             model = package.load_pickle("tts_models", "model")
@@ -546,11 +546,13 @@ class Application:
             HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(self._win_handler)
             kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
             
-        print('=' * 60)
-        print(f" Silero TTS Server for LunaTranslator v{MAIN_VERSION}")
+        print('=' * 55)
+        print(f" Silero TTS Real-Time Server v{MAIN_VERSION} by pav13")
+        print(f" Compatibility (for now): only LunaTranslator (VITS)")
         print(f" Device: {str(Config.DEVICE).upper()} | http://{Config.HOST}:{Config.PORT}")
         if DEBUG: print(" DEBUG mode ON")
-        print('=' * 60)
+        print('=' * 55)
+        print("READY")
         self.running = True
         
         try: self.http_server.run(Config.HOST, Config.PORT)
@@ -558,4 +560,9 @@ class Application:
         finally: self.stop()
 
 if __name__ == "__main__":
+    print("  ______  _____  _        ______  ______   ______       _______ _______  ______")
+    print("  / |       | |  | |      | |     | |  | \ / |  | \        | |     | |   / |")
+    print("  '------.  | |  | |   _  | |---- | |__| | | |  | |        | |     | |   '------.")
+    print("   ____|_/ _|_|_ |_|__|_| |_|____ |_|  \_\ \_|__|_/        |_|     |_|    ____|_/")
+    print()
     Application().run()
