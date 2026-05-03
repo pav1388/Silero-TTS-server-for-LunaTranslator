@@ -1,0 +1,86 @@
+# selfbuild_tts.py
+# pav13
+
+from myutils.config import urlpathjoin
+from tts.basettsclass import TTSbase, SpeechParam
+
+
+class TTS(TTSbase):
+    arg_support_pitch = True
+    arg_support_speed = True
+    
+    def init(self):
+        self.server_url = "http://127.0.0.1:23457"
+        self.voice_presets = {
+            0: {"vol_boost": 0,   "base_speed": 120, "base_pitch": "high"},    # aidar
+            1: {"vol_boost": 1.5, "base_speed": 100, "base_pitch": "low"},     # baya
+            2: {"vol_boost": 0,   "base_speed": 100, "base_pitch": "medium"},  # kseniya
+            3: {"vol_boost": 0.5, "base_speed": 100, "base_pitch": "medium"},  # xenia
+            4: {"vol_boost": -1,  "base_speed": 87,  "base_pitch": "high"}     # eugene
+        }
+
+    def getvoicelist(self):
+        headers = {"ngrok-skip-browser-warning": "true"}
+        
+        try:
+            response = self.proxysession.get(
+                urlpathjoin(self.server_url, "/silero/speakers"), 
+                headers=headers,
+                timeout=3
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                speakers = data.get("silero", [])
+                voicelist = []
+                internal = []
+                
+                for s in speakers:
+                    model_info = "silero_{}_{}_{}_{}".format(s["id"], s["name"], s["lang"], s["gender"])
+                    voicelist.append(model_info)
+                    internal.append(("silero", s["id"], s["name"]))
+                
+                return internal, voicelist
+        except Exception as e:
+            print("[Silero TTS] Can't connect to server: {}".format(e))
+
+    def speak(self, content, voice, param: SpeechParam):
+        if not content or not content.strip():
+            return None
+        
+        _, speaker_id, _ = voice
+        
+        # Получаем настройки для голоса по его ID
+        preset = self.voice_presets.get(speaker_id, {"vol_boost": 0, "base_speed": 100, "base_pitch": "medium"})
+        
+        # Конвертация speed: из [-10, 10] в проценты [40%, 300%], где 0 = 100% с учетом базовой скорости голоса
+        speed_percent = int(preset["base_speed"] + param.speed * (20 if param.speed > 0 else 6))
+        speed_percent = max(40, min(300, speed_percent))
+        
+        # Конвертация pitch: из [-10, 10] в уровни с учетом базовой высоты голоса
+        pitch_levels = ["x-low", "low", "medium", "high", "x-high"]
+        base_idx = pitch_levels.index(preset["base_pitch"]) if preset["base_pitch"] in pitch_levels else 2
+        delta = int(round((param.pitch + 10) / 20 * 4)) - 2  # -2..+2
+        pitch_index = max(0, min(4, base_idx + delta))
+        pitch_level = pitch_levels[pitch_index]
+        
+        headers = {"ngrok-skip-browser-warning": "true"}
+        
+        response = self.proxysession.get(
+            urlpathjoin(self.server_url, "/silero/speak"),
+            params={
+                "text": content,
+                "id": speaker_id,
+                "speed": speed_percent,
+                "pitch": pitch_level,
+                "vol_boost": preset["vol_boost"]
+            },
+            headers=headers,
+            stream=True,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            raise RuntimeError(f"Server error {response.status_code}: {response.text}")
+        
+        return response

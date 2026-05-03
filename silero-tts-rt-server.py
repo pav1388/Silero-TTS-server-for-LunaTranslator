@@ -8,42 +8,40 @@ from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.4.5-dev"
-# DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
-DEBUG = True
-
-# Список доступных голосов и индивидуальных подстроек
-SPEAKERS = [
-    {"id": 0, "name": "aidar",   "style": "male",   "lang": ["ru"], "vol_boost": 0,   "pitch": "high",   "base_speed": 1.2},
-    {"id": 1, "name": "baya",    "style": "female", "lang": ["ru"], "vol_boost": 1.5,   "pitch": "low",    "base_speed": 1.0},
-    {"id": 2, "name": "kseniya", "style": "female", "lang": ["ru"], "vol_boost": 0,   "pitch": "medium",    "base_speed": 1.0},
-    {"id": 3, "name": "xenia",   "style": "female", "lang": ["ru"], "vol_boost": 0.5,   "pitch": "medium", "base_speed": 1.0},
-    {"id": 4, "name": "eugene",  "style": "male",   "lang": ["ru"], "vol_boost": -1, "pitch": "high",    "base_speed": 0.87},
-]
-
+MAIN_VERSION = "0.5"
+DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
 
 class Config:
     """Конфигурация приложения"""
     MODEL_PATH = "models/v5_5_ru.pt"
-    URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
+    MODEL_URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
     TORCH_DEVICE = os.environ.get('TORCH_DEVICE', 'cpu').lower()
     if TORCH_DEVICE in ('cuda', 'gpu'):
         DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         DEVICE = torch.device('cpu')
     SAMPLE_RATE = 48000
-    HOST, PORT = "127.0.0.1", 23456
-    MAX_TEXT_LENGTH = 800
+    HOST, PORT = "127.0.0.1", 23457
+    MAX_TEXT_LENGTH = 950
     CPU_IDLE_TIMEOUT, CPU_MONITOR_INTERVAL, CPU_SAMPLE_DURATION = 30.0, 1.0, 0.07 # sec
     CPU_HIGH_THRESHOLD, CPU_CRITICAL_THRESHOLD = 85.0, 95.0 # %
     QUALITY_LEVELS = [
         {"sample_rate": 8000,  "put_accent": False, "put_yo": False, "name": "LOWEST"},
         {"sample_rate": 8000,  "put_accent": True,  "put_yo": False, "name": "LOW"},
-        {"sample_rate": 24000, "put_accent": False, "put_yo": False, "name": "MEDIUM-LOW"},
-        {"sample_rate": 24000, "put_accent": True,  "put_yo": True,  "name": "MEDIUM"},
+        {"sample_rate": 24000, "put_accent": False, "put_yo": False, "name": "MED-LOW"},
+        {"sample_rate": 24000, "put_accent": True,  "put_yo": True,  "name": "MED"},
         {"sample_rate": 48000, "put_accent": True,  "put_yo": False, "name": "HIGH"},
-        {"sample_rate": 48000, "put_accent": True,  "put_yo": True,  "name": "MAXIMUM"}
+        {"sample_rate": 48000, "put_accent": True,  "put_yo": True,  "name": "MAX"}
     ]
+    PITCH_ORDER = ["x-low", "low", "medium", "high", "x-high"]
+    SPEAKERS = [
+        {"id": 0, "name": "aidar",   "gender": "male",   "lang": "ru"},
+        {"id": 1, "name": "baya",    "gender": "female", "lang": "ru"},
+        {"id": 2, "name": "kseniya", "gender": "female", "lang": "ru"},
+        {"id": 3, "name": "xenia",   "gender": "female", "lang": "ru"},
+        {"id": 4, "name": "eugene",  "gender": "male",   "lang": "ru"}
+    ]
+    
 
 class ModelLoader:
     """загрузка модели и инициализация torch"""
@@ -75,13 +73,13 @@ class ModelLoader:
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
             try:
                 import urllib.request
-                print(f"[INFO] Downloading model...")
-                urllib.request.urlretrieve(Config.URL, model_path, 
+                print(f"[INFO] Downloading model (~140Mb)...")
+                urllib.request.urlretrieve(Config.MODEL_URL, model_path, 
                     lambda b, bs, ts: print(f"\r {int(b*bs*100/ts)}%", end=''))
                 print(f"\n[INFO] Model downloaded.")
             except Exception as e:
                 print(f"\n[ERROR] Download failed: {e}")
-                print(f"\n Please download manually from: {Config.URL}")
+                print(f"\n Please download manually from: {Config.MODEL_URL}")
                 input(f" and save as: {model_path}")
                 sys.exit(1)
     
@@ -127,7 +125,7 @@ class CPUMonitor:
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
-            if DEBUG: print("[DEBUG] CPU monitoring ON")
+            if DEBUG: print(f"[DEBUG] CPU monitoring ON | Idle: {Config.CPU_IDLE_TIMEOUT}s | Int: {Config.CPU_MONITOR_INTERVAL}s | Dur: {Config.CPU_SAMPLE_DURATION}s")
     
     def stop(self):
         with self.lock:
@@ -206,8 +204,8 @@ class TextProcessor:
         'a':'а','b':'б','c':'к','d':'д','e':'е','f':'ф','g':'г','h':'х','i':'и','j':'дж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','q':'к','r':'р','s':'с','t':'т','u':'у','v':'в','w':'в','x':'кс','y':'и','z':'з'}
 
     def __init__(self):
-        self.base_speed = 1.0
-        self.base_pitch = "medium"
+        self.speed_percent = 100
+        self.pitch_level = "medium"
         self.transl_trie = {}
         for k, v in self.TRANSLIT_MAP.items():
             node = self.transl_trie
@@ -215,15 +213,9 @@ class TextProcessor:
                 node = node.setdefault(ch, {})
             node['_'] = v
 
-    def set_ssml_params(self, speed: float, pitch: str):
-        self.base_speed, self.base_pitch = speed, pitch
-
-    def _adj_pitch(self, pitch: str, delta: int) -> str:
-        order = ["x-low", "low", "medium", "high", "x-high"]
-        try:
-            idx = max(0, min(len(order) - 1, order.index(pitch) + delta))
-            return order[idx]
-        except ValueError: return "medium"
+    def set_ssml_params(self, speed_percent: int, pitch: str):
+        self.speed_percent = max(40, min(300, speed_percent))
+        self.pitch_level = pitch if pitch in Config.PITCH_ORDER else "medium"
 
     def process_text(self, text: str) -> str:
         if not text: return "", 0
@@ -236,9 +228,7 @@ class TextProcessor:
         text = unquote(text).lower()
         has_latin = any(ch in self.LATIN for ch in text)
         processed_body = self._proc(text, len_text, has_latin)
-        base_r = f"{int(self.base_speed * 100)}"
-        base_p = self.base_pitch
-        return f'<speak><prosody rate="{base_r}%" pitch="{base_p}">{processed_body}</prosody></speak>', len_text
+        return f'<speak><prosody rate="{self.speed_percent}%" pitch="{self.pitch_level}">{processed_body}</prosody></speak>', len_text
 
     def _proc(self, text: str, len_text: int, has_latin: bool) -> str:
         res, buf, i, n = [], [], 0, len_text
@@ -311,18 +301,24 @@ class TextProcessor:
             if '_' in node: best, best_pos = node['_'], j
         return (best_pos, best) if best else (pos + 1, text[pos] if text[pos] in self.ALLOWED else " ")
     
-    def _wrap(self, txt: str, end_punct: str) -> str:
-        if not txt: return ""
-        if end_punct not in self.EMOTIONS: return txt
+    def _wrap(self, text: str, end_punct: str) -> str:
+        if not text: return ""
+        if end_punct not in self.EMOTIONS: return text
         
         sm, pd = self.EMOTIONS[end_punct]
-        emo_r = f"{int(self.base_speed * sm)}"
-        emo_p = self._adj_pitch(self.base_pitch, pd)
-        words = txt.split()
+        emo_r = f"{int(self.speed_percent * sm / 100)}"
+        pitch_order = Config.PITCH_ORDER
+        try:
+            idx = max(0, min(len(pitch_order) - 1, pitch_order.index(self.pitch_level) + pd))
+            emo_p = pitch_order[idx]
+        except ValueError:
+            emo_p = self.pitch_level
+        
+        words = text.split()
         def attrs(rate, pitch): return f'rate="{rate}%" pitch="{pitch}"'
         
         if len(words) < 4:
-            return f'<prosody {attrs(emo_r, emo_p)}>{txt}</prosody>'
+            return f'<prosody {attrs(emo_r, emo_p)}>{text}</prosody>'
         
         tail_count = max(1, int(len(words) * 0.2))
         
@@ -398,51 +394,47 @@ class TTSService:
         self.audio_synthesizer = AudioSynthesizer(model, device, cpu_monitor)
         self.cpu_monitor = cpu_monitor
     
-    def synthesize_speech(self, text: str, speaker_id: int, length: float, pitch_adj: float) -> bytes:
+    def synthesize_speech(self, text: str, speaker_id: int, speed_percent: int, pitch_level: str, vol_boost: float) -> bytes:
         t_start = time.time() if DEBUG else None
         
-        if not (0 <= speaker_id < len(SPEAKERS)): 
+        if not (0 <= speaker_id < len(Config.SPEAKERS)): 
             raise ValueError(f"Bad Speaker ID: {speaker_id}")
         
         self.cpu_monitor.record_activity()
         q = self.cpu_monitor.get_current_quality_config()
         sr = min(Config.SAMPLE_RATE, q["sample_rate"])
         
-        spk = SPEAKERS[speaker_id]
-        speed = max(0.1, min(10.0, spk['base_speed'] * (2 ** ((1 - length) * (5 if length >= 1 else 15) / 10))))
+        spk = Config.SPEAKERS[speaker_id]
         
-        p_map = {"x-low": -10, "low": -4, "medium": 0, "high": 4, "x-high": 10}
-        base_p = p_map.get(spk['pitch'], 0)
-        final_p = max(-10, min(10, base_p + pitch_adj))
-        p_str = next((k for k, v in p_map.items() if v == final_p), "medium")
-        
-        self.text_processor.set_ssml_params(speed, p_str)
+        self.text_processor.set_ssml_params(speed_percent, pitch_level)
         ssml, len_text = self.text_processor.process_text(text)
         
         if DEBUG: 
-            print(f"[DEBUG] Quality: {q['name']} Spk:{spk['name']} Speed:{speed:.2f} Pitch:{p_str} SR:{sr}")
-            print(f"[DEBUG] Text len:{len_text} SSML:{ssml}")
+            print(f"[DEBUG] N:{spk['name']} S:{speed_percent}% P:{pitch_level} Vol:{vol_boost}dB Q: {q['name']} SR:{sr}")
+            print(f"[DEBUG] L:{len_text} SSML:{ssml}")
         
         wav_bytes = self.audio_synthesizer.synthesize(
             ssml, spk['name'], sr, 
             q['put_accent'], q['put_yo'], 
-            spk['vol_boost']
+            vol_boost
         )
         
         if DEBUG and t_start:
             num_samples = len(wav_bytes) - 44
             dur = num_samples / (sr * 2)
             if dur > 0: 
-                print(f"[DEBUG] Time:{(time.time()-t_start)*1000:.0f}ms Dur:{dur:.2f}s RTF:{(time.time()-t_start)/dur:.2f}")
+                print(f"[DEBUG] T:{(time.time()-t_start)*1000:.0f}ms D:{dur:.2f}s RTF:{(time.time()-t_start)/dur:.2f}")
         
         return wav_bytes
 
 
 class HTTPServer:
     """HTTP сервер"""
-    def __init__(self, tts_service):
+    def __init__(self, tts_service, application):
+        self.r_count = 0
         self.app = Bottle()
         self.tts_service = tts_service
+        self.application = application
         self._setup_routes()
         self._setup_cors()
     
@@ -454,32 +446,38 @@ class HTTPServer:
             response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With'
             response.headers['Access-Control-Max-Age'] = '86400'
         
-        @self.app.route('/voice/speakers', method='OPTIONS')
-        @self.app.route('/voice/vits', method='OPTIONS')
+        @self.app.route('/silero/speakers', method='OPTIONS')
+        @self.app.route('/silero/speak', method='OPTIONS')
+        @self.app.route('/silero/restart', method='OPTIONS')
         def options_handler():
             response.status = 200
             return ''
     
     def _setup_routes(self):
-        @self.app.route('/voice/speakers', method='GET')
+        @self.app.route('/silero/speakers', method='GET')
         def get_speakers():
             response.content_type = 'application/json'
-            print("[HTTP] Request list of speakers from LunaTranslator.")
-            return {"vits": [{"id": s["id"], "name": s["name"], "lang": s["lang"]} for s in SPEAKERS]}
+            print("[HTTP] Request list of speakers.")
+            return {"silero": [{"id": s["id"], "name": s["name"], "gender": s["gender"], "lang": s["lang"]} for s in Config.SPEAKERS]}
         
-        @self.app.route('/voice/vits', method='GET')
+        @self.app.route('/silero/speak', method='GET')
         def synthesize():
-            text, speaker_id = request.query.text or "", int(request.query.id or 0)
-            length, pitch = float(request.query.length or 1.0), float(request.query.pitch or 0)
+            text = request.query.text or ""
+            speaker_id = int(request.query.id or 0)
+            speed = int(request.query.speed or 100)
+            pitch = request.query.pitch or "medium"
+            vol_boost = float(request.query.vol_boost or 0)
             
             if not text: 
                 response.status = 400
                 return {"error": "Text is required"}
             
-            print(f"[HTTP] New request: ID={speaker_id}")
+            self.r_count += 1
+            print(f"[HTTP] Speech request #{self.r_count}")
+            if DEBUG: print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
             
             try:
-                audio_data = self.tts_service.synthesize_speech(text, speaker_id, length, pitch)
+                audio_data = self.tts_service.synthesize_speech(text, speaker_id, speed, pitch, vol_boost)
                 response.content_type = 'audio/wav'
                 response.headers['Content-Length'] = str(len(audio_data))
                 return audio_data
@@ -488,9 +486,21 @@ class HTTPServer:
                 response.status = 500
                 response.content_type = 'text/plain'
                 return str(e)
+        
+        @self.app.route('/silero/restart', method='POST')
+        def restart():
+            try:
+                print("[HTTP] Reboot request.")
+                threading.Thread(target=self.application.restart, daemon=True).start()
+                response.status = 200
+                return {"status": "success", "message": "Restarting..."}
+            except Exception as e:
+                print(f"[ERROR] Restart failed: {e}")
+                response.status = 500
+                return {"error": str(e)}
     
     def run(self, host: str, port: int):
-        run(self.app, host=host, port=port, quiet=True, server='wsgiref')
+        run(self.app, host=host, port=port, quiet=not DEBUG, server='wsgiref')
 
 
 class Application:
@@ -510,7 +520,7 @@ class Application:
         self.model = ModelLoader.load_model(Config.MODEL_PATH, Config.DEVICE)
         self.cpu_monitor = CPUMonitor()
         self.tts_service = TTSService(self.model, Config.DEVICE, self.cpu_monitor)
-        self.http_server = HTTPServer(self.tts_service)
+        self.http_server = HTTPServer(self.tts_service, self)
     
     def stop(self, signum=None, frame=None):
         if not self.running: return
@@ -525,11 +535,27 @@ class Application:
             self.model = None
         
         num_to_words.cache_clear()
-        
-        def exit_now(): os._exit(0)
-        threading.Timer(1, exit_now).start()
-        print("[INFO] Application stopped successfully")
+        threading.Timer(1, os._exit(0)).start()
+        print("[INFO] Application stopped.")
     
+    def restart(self):
+        if not self.running: return
+        self.running = False
+        
+        if self.cpu_monitor:
+            self.cpu_monitor.stop()
+        
+        if self.model:
+            try: ModelLoader.unload_model(self.model, Config.DEVICE)
+            except: pass
+            self.model = None
+        
+        num_to_words.cache_clear()
+        print("[INFO] Restarting application...")
+        time.sleep(1)
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+        
     def _win_handler(self, dwCtrlType):
         if dwCtrlType in [0, 2]:
             self.stop()
@@ -547,10 +573,10 @@ class Application:
             kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
             
         print('=' * 55)
-        print(f" Silero TTS Real-Time Server v{MAIN_VERSION} by pav13")
-        print(f" Compatibility (for now): only LunaTranslator (VITS)")
-        print(f" Device: {str(Config.DEVICE).upper()} | http://{Config.HOST}:{Config.PORT}")
-        if DEBUG: print(" DEBUG mode ON")
+        print(f"  Silero TTS Real-Time Server v{MAIN_VERSION} by pav13")
+        print(f"  Device: {str(Config.DEVICE).upper()}")
+        print(f"  URL: http://{Config.HOST}:{Config.PORT}")
+        if DEBUG: print("  DEBUG mode ON")
         print('=' * 55)
         print("READY")
         self.running = True
@@ -560,9 +586,10 @@ class Application:
         finally: self.stop()
 
 if __name__ == "__main__":
+    print()
     print("   ______  _____  _        ______  ______   ______       _______ _______  ______")
-    print("  / |       | |  | |      | |     | |  | \ / |  | \        | |     | |   / |")
+    print("  / |       | |  | |      | |     | |  | \\ / |  | \\        | |     | |   / |")
     print("  '------.  | |  | |   _  | |---- | |__| | | |  | |        | |     | |   '------.")
-    print("   ____|_/ _|_|_ |_|__|_| |_|____ |_|  \_\ \_|__|_/        |_|     |_|    ____|_/")
+    print("   ____|_/ _|_|_ |_|__|_| |_|____ |_|  \\_\\ \\_|__|_/        |_|     |_|    ____|_/")
     print()
     Application().run()

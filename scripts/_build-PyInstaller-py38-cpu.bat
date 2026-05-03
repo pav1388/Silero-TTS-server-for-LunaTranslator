@@ -21,12 +21,18 @@ rmdir /s /q build dist __pycache__ 2>nul
 del /s /q *.pyc *.spec *.manifest 2>nul
 rmdir /s /q "%RELEASE_DIR%" 2>nul
 
-c:\Python38-64\python.exe -m PyInstaller --onedir --noupx --icon=builder\icon.ico %PROGRAMFILE%
+c:\Python38-64\python.exe -m PyInstaller ^
+    --onedir ^
+    --noupx ^
+    --icon=scripts\icon.ico ^
+    --exclude-module tensorboard ^
+    --exclude-module pytest ^
+    %PROGRAMFILE%
 
-xcopy "models\v5_5_ru.pt" "dist\%FOLDERNAME%\models\" /I >nul 2>nul
-xcopy "README.md" "dist\%FOLDERNAME%\" >nul 2>nul
-xcopy "tts-rt-server-simple-tester.html" "dist\%FOLDERNAME%\" >nul 2>nul
-xcopy "vitsSimpleAPI_fix\*" "dist\%FOLDERNAME%\vitsSimpleAPI_fix\" /E /I >nul 2>nul
+xcopy "models\v5_5_ru.pt" "dist\%FOLDERNAME%\models\" /I
+xcopy "README.md" "dist\%FOLDERNAME%\"
+xcopy "tts-rt-server-simple-tester.html" "dist\%FOLDERNAME%\"
+xcopy "LunaTranslator\*" "dist\%FOLDERNAME%\LunaTranslator\" /E /I
 
 rename dist\%FOLDERNAME% "%RELEASE_DIR%"
 rename dist releases

@@ -17,7 +17,7 @@
             padding: 8px;
             margin: 0 auto;
             width: 95%;
-            max-width: 550px;
+            max-width: 650px;
         }
         h1 {
             font-size: 16px;
@@ -43,6 +43,7 @@
             clear: both;
         }
         .server-box {
+            font-weight: bold;
             background: #D0D0D0;
             border: 1px solid #000000;
             padding: 4px;
@@ -68,17 +69,27 @@
         }
         .speaker-item {
             margin-bottom: 4px;
+            padding: 2px;
+            cursor: pointer;
+        }
+        .speaker-item:hover {
+            background: #C8C8C8;
         }
         .speaker-item input {
             margin: 0 4px 0 0;
         }
+        .speaker-preset-info {
+            color: #000000;
+            margin-left: 20px;
+            display: block;
+        }
         .param-row {
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             clear: both;
         }
         .param-label {
             display: inline-block;
-            width: 45px;
+            width: 50px;
             font-weight: bold;
         }
         .spin-group {
@@ -104,7 +115,9 @@
         }
         .text-input {
             width: 100%;
-            border: 1px solid #000000;
+            font-size: 13px;
+            font-weight: bold;
+			border: 1px solid #000000;
             background: #FFFFFF;
             font-family: 'Courier New', monospace;
             font-size: 12px;
@@ -146,7 +159,7 @@
         }
         .value-tip {
             font-size: 10px;
-            color: #0000AA;
+            color: #000000;
             margin-left: 6px;
         }
         fieldset {
@@ -193,18 +206,27 @@
             border: 1px solid #000000;
             display: none;
         }
+        .param-info {
+            font-weight: bold;
+            color: #000000;
+            margin-top: 6px;
+            padding-top: 4px;
+            border-top: 1px dotted #808080;
+        }
     </style>
 </head>
 <body>
 <div class="box">
-    <h1>Silero TTS Real-time Server Simple Tester <a href="https://github.com/pav1388/Silero-TTS-server-for-LunaTranslator" target="_blank" style="font-size: 16px; color: #0000AA;"> [GitHub]</a></h1>
+    <h1>Silero TTS Real-time Server Tester (LunaTranslator Emulator)</h1>
 
     <div class="server-box">
-        <table width="100%" cellpadding="0" cellspacing="0">
+        <table width="99%" cellpadding="0" cellspacing="0">
             <tr>
                 <td width="45"><label>URL:</label></td>
-                <td><input type="text" id="server-url" value="http://127.0.0.1:23456" style="width: 99%; background: #FFFFFF; border: 1px solid #000000;" /></td>
+                <td><input type="text" id="server-url" value="http://127.0.0.1:23457" style="width: 99%; background: #FFFFFF; border: 1px solid #000000;" /></td>
+				<td width="160" style="padding-left: 6px;"><a href="#" onclick="fetch(document.getElementById('server-url').value + '/silero/restart', {method: 'POST'})">Перезагрузка сервера</a></td>
             </tr>
+				
         </table>
     </div>
 
@@ -212,14 +234,14 @@
         <tr>
             <td width="50%" style="padding-right: 6px;">
                 <div class="speaker-panel">
-                    <div style="font-weight: bold; margin-bottom: 6px;">Голоса</div>
+                    <div style="font-weight: bold; margin-bottom: 6px;">Голоса (с индивидуальными настройками)</div>
                     <div id="speaker-options">
                     </div>
                 </div>
-            </td>
+             </td>
             <td width="50%">
                 <div class="param-panel">
-                    <div style="font-weight: bold; margin-bottom: 6px;">Параметры</div>
+                    <div style="font-weight: bold; margin-bottom: 6px;">Клиентские параметры</div>
                     <div class="param-row">
                         <span class="param-label">Speed:</span>
                         <div class="spin-group">
@@ -238,9 +260,15 @@
                         </div>
                         <span class="value-tip">-10..10</span>
                     </div>
+                    <div class="param-info">
+                        Итоговые параметры для сервера:<br>
+                        <span id="final-speed">-</span><br>
+                        <span id="final-pitch">-</span><br>
+                        <span id="final-vol">-</span>
+                    </div>
                 </div>
-            </td>
-        </tr>
+             </td>
+         </tr>
     </table>
 
     <div class="row" style="margin-top: 5px;">
@@ -267,6 +295,15 @@
 </div>
 
 <script type="text/javascript">
+    // Индивидуальные настройки для каждого голоса (как в клиенте)
+    var VOICE_PRESETS = {
+        0: { "vol_boost": 0,   "base_speed": 120, "base_pitch": "high",    "name": "aidar", "gender": "M" },
+        1: { "vol_boost": 1.5, "base_speed": 100, "base_pitch": "low",     "name": "baya", "gender": "F" },
+        2: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "kseniya", "gender": "F" },
+        3: { "vol_boost": 0.5, "base_speed": 100, "base_pitch": "medium",  "name": "xenia", "gender": "F" },
+        4: { "vol_boost": -1,  "base_speed": 87,  "base_pitch": "high",    "name": "eugene", "gender": "M" }
+    };
+    
     var SPEAKERS = [
         { id: 0, name: "aidar", display: "0 aidar M ru" },
         { id: 1, name: "baya", display: "1 baya F ru" },
@@ -277,6 +314,8 @@
     
     var speedValue = 0.0;
     var pitchValue = 0.0;
+    var currentSpeakerId = 0;
+    
     var serverUrlInput = document.getElementById('server-url');
     var textarea = document.getElementById('text');
     var openBtn = document.getElementById('open-btn');
@@ -290,13 +329,17 @@
     var pitchPlus = document.getElementById('pitch-plus');
     var statusMsg = document.getElementById('status-msg');
     var audioPlayer = document.getElementById('audio-player');
+    var speakerPresetInfo = document.getElementById('speaker-preset-info');
+    var finalSpeedSpan = document.getElementById('final-speed');
+    var finalPitchSpan = document.getElementById('final-pitch');
+    var finalVolSpan = document.getElementById('final-vol');
     
     var exampleTexts = {
-        "1": "Мышка сушек насушила, мышка мышек пригласила, мышки сушки кушать стали, з+убки сразу же сломали.",
+        "1": "Мышка сушек насушила, мышка мышек пригласила, мышки сушки кушать стали, зубки сразу же сломали.",
         "2": "Ехал Грека через реку, видит Грека — в реке рак. Сунул Грека руку в реку, рак за руку Греку — цап!",
         "3": "Что? Не может быть! Да это же просто великолепно... Ой, подожди, я ошибся.",
         "4": "Он установил Windows 11, запустил файл test_v5.mp3 и переключился на Wi-Fi 6.",
-        "5": "Hello World! 123.456 тест-драйв... что будет? (может быть) [или нет] 1/2 круга & 5% скидка. Ough! Augh! Eigh! Tion. Shch! Ugh... 3.14159 — это Пи. Эй, ты! Как дела?; Хорошо: отлично. Привет @user#1! $100.99 & €50.50... Что если 3.14159265 * 2 = 6.2831853? (Скобки [внутри {других}]) — это сложно! Hello World -> Привет Мир. Tschüss! Café résumé. Naïve. 1/4 + 3/4 = 1. 50% off! Check: a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z. 0123456789. !@#$%^&*()_+-=[]{}|;':`~"
+        "5": "Hello World! 123.456 тест-драйв... что будет? (может быть) [или нет] 1/2 круга & 5% скидка."
     };
     
     function showStatus(msg, isError) {
@@ -311,33 +354,89 @@
         var html = '';
         for (var i = 0; i < SPEAKERS.length; i++) {
             var spk = SPEAKERS[i];
+            var preset = VOICE_PRESETS[spk.id];
+            var presetText = '';
+            if (preset) {
+                presetText = '<span class="speaker-preset-info">vol=' + preset.vol_boost + 
+                            'dB | spd=' + preset.base_speed + 
+                            '% | ptch=' + preset.base_pitch + '</span>';
+            }
             var checkedAttr = (i === 0) ? ' checked="checked"' : '';
-            html += '<div class="speaker-item">' +
+            html += '<div class="speaker-item" onclick="document.getElementById(\'spk_' + spk.id + '\').click();">' +
                     '<input type="radio" name="speaker" id="spk_' + spk.id + '" value="' + spk.id + '"' + checkedAttr + ' />' +
-                    '<label for="spk_' + spk.id + '"> ' + spk.display + '</label>' +
+                    '<label for="spk_' + spk.id + '"> <b>' + spk.display + '</b></label>' +
+                    presetText +
                     '</div>';
         }
         container.innerHTML = html;
         
         var radios = document.getElementsByName('speaker');
         for (var r = 0; r < radios.length; r++) {
-            radios[r].onclick = function() { updateUrlPreview(); };
+            radios[r].onclick = function() { 
+                currentSpeakerId = parseInt(this.value, 10);
+                updateFinalParams();
+                updateUrlPreview();
+            };
         }
+        
+        currentSpeakerId = 0;
+        updateFinalParams();
     }
     
     function getSelectedSpeakerId() {
-        var radios = document.getElementsByName('speaker');
-        for (var i = 0; i < radios.length; i++) {
-            if (radios[i].checked) {
-                return parseInt(radios[i].value, 10);
-            }
+        return currentSpeakerId;
+    }
+    
+    function getFinalSpeedPercent() {
+        var preset = VOICE_PRESETS[currentSpeakerId];
+        if (!preset) return 100;
+        
+        var baseSpeed = preset.base_speed;
+        var speedPercent;
+        
+        if (speedValue > 0) {
+            speedPercent = baseSpeed + speedValue * 20;
+        } else {
+            speedPercent = baseSpeed + speedValue * 6;
         }
-        return 0;
+        
+        speedPercent = Math.max(40, Math.min(300, speedPercent));
+        return Math.round(speedPercent);
+    }
+    
+    function getFinalPitchLevel() {
+        var preset = VOICE_PRESETS[currentSpeakerId];
+        if (!preset) return "medium";
+        
+        var pitchLevels = ["x-low", "low", "medium", "high", "x-high"];
+        var baseIdx = pitchLevels.indexOf(preset.base_pitch);
+        if (baseIdx === -1) baseIdx = 2;
+        
+        var delta = Math.round((pitchValue + 10) / 20 * 4) - 2;
+        var pitchIndex = Math.max(0, Math.min(4, baseIdx + delta));
+        
+        return pitchLevels[pitchIndex];
+    }
+    
+    function getFinalVolBoost() {
+        var preset = VOICE_PRESETS[currentSpeakerId];
+        return preset ? preset.vol_boost : 0;
+    }
+    
+    function updateFinalParams() {
+        var finalSpeed = getFinalSpeedPercent();
+        var finalPitch = getFinalPitchLevel();
+        var finalVol = getFinalVolBoost();
+        
+        finalSpeedSpan.innerHTML = 'speed: ' + finalSpeed + '%';
+        finalPitchSpan.innerHTML = 'pitch: ' + finalPitch;
+        finalVolSpan.innerHTML = 'vol_boost: ' + finalVol + ' dB';
     }
     
     function updateSpeedUI() {
         var rounded = Math.round(speedValue * 10) / 10;
         speedInput.value = rounded.toFixed(1);
+        updateFinalParams();
         updateUrlPreview();
     }
     
@@ -357,6 +456,7 @@
     function updatePitchUI() {
         var rounded = Math.round(pitchValue * 10) / 10;
         pitchInput.value = rounded.toFixed(1);
+        updateFinalParams();
         updateUrlPreview();
     }
     
@@ -382,18 +482,16 @@
         if (server === '' || text === '') return null;
         
         var speakerId = getSelectedSpeakerId();
-        var lengthParam;
-		if (speedValue > 0) {
-			lengthParam = 1 - speedValue / 15;
-		} else {
-			lengthParam = 1 - speedValue / 5;
-		}
-        var pitchParam = pitchValue;
-        var url = server + '/voice/vits?';
+        var speedParam = getFinalSpeedPercent();
+        var pitchParam = getFinalPitchLevel();
+        var volParam = getFinalVolBoost();
+        
+        var url = server + '/silero/speak?';
         url += 'text=' + encodeURIComponent(text);
         url += '&id=' + encodeURIComponent(speakerId);
-        url += '&length=' + encodeURIComponent(lengthParam);
+        url += '&speed=' + encodeURIComponent(speedParam);
         url += '&pitch=' + encodeURIComponent(pitchParam);
+        url += '&vol_boost=' + encodeURIComponent(volParam);
         return url;
     }
     
@@ -410,7 +508,7 @@
         var server = serverUrlInput.value;
         var text = textarea.value;
         if (!server) {
-            alert('Введите URL сервера (например http://127.0.0.1:23456)');
+            alert('Введите URL сервера (например http://127.0.0.1:23457)');
             return;
         }
         if (!text) {
@@ -422,7 +520,6 @@
             alert('Не удалось сформировать ссылку');
             return;
         }
-        // открываем в новом окне
         window.open(url, '_blank');
     }
     
@@ -430,7 +527,7 @@
         var server = serverUrlInput.value;
         var text = textarea.value;
         if (!server) {
-            alert('Введите URL сервера (например http://127.0.0.1:23456)');
+            alert('Введите URL сервера (например http://127.0.0.1:23457)');
             return;
         }
         if (!text) {
@@ -443,7 +540,11 @@
             return;
         }
         
-        showStatus('Генерация и воспроизведение...', false);
+        var finalSpeed = getFinalSpeedPercent();
+        var finalPitch = getFinalPitchLevel();
+        var finalVol = getFinalVolBoost();
+        
+        showStatus('Генерация', false);
         playBtn.disabled = true;
         openBtn.disabled = true;
         
@@ -466,11 +567,11 @@
             };
             
             await audioPlayer.play();
-            showStatus('Воспроизведение началось', false);
+            showStatus(' Воспроизведение началось', false);
             
         } catch (error) {
             console.error('Error:', error);
-            showStatus('Ошибка: ' + error.message, true);
+            showStatus(' Ошибка: ' + error.message, true);
         } finally {
             playBtn.disabled = false;
             openBtn.disabled = false;
@@ -538,14 +639,6 @@
         updatePitchUI();
         bindEvents();
         updateUrlPreview();
-        
-        var infoDiv = document.createElement('div');
-        infoDiv.className = 'inline-hint';
-        infoDiv.style.marginTop = '6px';
-        infoDiv.style.borderTop = '1px solid #808080';
-        infoDiv.style.paddingTop = '4px';
-        var paramPanel = document.querySelector('.param-panel');
-        if(paramPanel) paramPanel.appendChild(infoDiv);
     }
     
     window.onload = init;
