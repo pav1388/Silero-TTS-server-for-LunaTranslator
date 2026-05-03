@@ -9,8 +9,10 @@ class TTS(TTSbase):
     arg_support_pitch = True
     arg_support_speed = True
     
+    SILERO_URL = "http://127.0.0.1:23457"
+    STREAMING_MODE = True
+    
     def init(self):
-        self.server_url = "http://127.0.0.1:23457"
         self.voice_presets = {
             0: {"vol_boost": 0,   "base_speed": 120, "base_pitch": "high"},    # aidar
             1: {"vol_boost": 1.5, "base_speed": 100, "base_pitch": "low"},     # baya
@@ -24,7 +26,7 @@ class TTS(TTSbase):
         
         try:
             response = self.proxysession.get(
-                urlpathjoin(self.server_url, "/silero/speakers"), 
+                urlpathjoin(self.SILERO_URL, "/silero/speakers"), 
                 headers=headers,
                 timeout=3
             )
@@ -49,8 +51,6 @@ class TTS(TTSbase):
             return None
         
         _, speaker_id, _ = voice
-        
-        # Получаем настройки для голоса по его ID
         preset = self.voice_presets.get(speaker_id, {"vol_boost": 0, "base_speed": 100, "base_pitch": "medium"})
         
         # Конвертация speed: из [-10, 10] в проценты [40%, 300%], где 0 = 100% с учетом базовой скорости голоса
@@ -64,20 +64,19 @@ class TTS(TTSbase):
         pitch_index = max(0, min(4, base_idx + delta))
         pitch_level = pitch_levels[pitch_index]
         
-        headers = {"ngrok-skip-browser-warning": "true"}
-        
         response = self.proxysession.get(
-            urlpathjoin(self.server_url, "/silero/speak"),
+            urlpathjoin(self.SILERO_URL, "/silero/speak"),
             params={
                 "text": content,
                 "id": speaker_id,
                 "speed": speed_percent,
                 "pitch": pitch_level,
-                "vol_boost": preset["vol_boost"]
+                "vol_boost": preset["vol_boost"],
+                "stream": str(self.STREAMING_MODE).lower()
             },
-            headers=headers,
+            headers={"ngrok-skip-browser-warning": "true"},
             stream=True,
-            timeout=30
+            timeout=120 if self.STREAMING_MODE else 30
         )
         
         if response.status_code != 200:

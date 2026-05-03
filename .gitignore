@@ -2,6 +2,7 @@ models/*.pt
 releases/
 backup/
 todo.txt
+*.lnk
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
