@@ -1,25 +1,26 @@
 # silero-tts-rt-server.py
 # pav13
 
-import os, sys, time, ctypes, struct, psutil, signal, torch, numpy as np
+import os, sys, time, ctypes, struct, re, psutil, signal, torch, numpy as np
 from bottle import Bottle, request, response, run, hook
 from num2words import num2words
 from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.6"
-DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true', 'yes', 'on')
+MAIN_VERSION = "0.6.1"
+
+DEBUG = ('--debug' in sys.argv) or (os.environ.get('DEBUG', '0').lower() in ('1', 'true'))
+CUDA = ('--cuda' in sys.argv or '--gpu' in sys.argv) or (os.environ.get('CUDA', '0').lower() in ('1', 'true'))
 
 class Config:
     """Конфигурация приложения"""
-    MODEL_PATH = "models/v5_5_ru.pt"
-    MODEL_URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
-    TORCH_DEVICE = os.environ.get('TORCH_DEVICE', 'cpu').lower()
-    if TORCH_DEVICE in ('cuda', 'gpu'):
+    if CUDA:
         DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         DEVICE = torch.device('cpu')
+    MODEL_PATH = "models/v5_5_ru.pt"
+    MODEL_URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
     SAMPLE_RATE = 48000
     HOST, PORT = "127.0.0.1", 23457
     MAX_TEXT_LENGTH = 950
@@ -394,6 +395,110 @@ class TTSService:
         self.audio_synthesizer = AudioSynthesizer(model, device, cpu_monitor)
         self.cpu_monitor = cpu_monitor
     
+    def generate_speaker_names(self):
+        return {"silero": [{"id": s["id"], "name": s["name"], "gender": s["gender"], "lang": s["lang"]} for s in Config.SPEAKERS]}
+    
+    def synthesize_stream(self, text, speaker_id, speed, pitch, vol_boost, r_count):
+        sentences = re.split(r'(?<=[.!?…])\s+', text)
+        result = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            
+            if len(sentence) <= 200:
+                result.append(sentence)
+            else:
+                parts = re.split(r'(?<=[,;:—])\s+', sentence)
+                
+                current = ""
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    
+                    if current and len(current) < 60:
+                        current += " " + part
+                    elif current:
+                        result.append(current)
+                        current = part
+                    else:
+                        current = part
+                
+                if current:
+                    if result and len(current) < 60:
+                        result[-1] += " " + current
+                    else:
+                        result.append(current)
+        
+        sentences = result
+        
+        if not sentences:
+            response.status = 400
+            return {"error": "No valid sentences found"}
+        
+        if DEBUG: print()
+        print(f"\n[HTTP] Stream request #{r_count}: {len(sentences)} sentences")
+        if DEBUG:
+            print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
+            for i, s in enumerate(sentences):
+                print(f"  [{i+1}] {s[:80]}{'...' if len(s) > 80 else ''}")
+        
+        def generate():
+            first = True
+            for i, sentence in enumerate(sentences):
+                try:
+                    if DEBUG:
+                        print()
+                        print(f"[STREAM] Synthesizing sentence {i+1}/{len(sentences)}...")
+                    
+                    wav = self.synthesize_speech(
+                        sentence, speaker_id, speed, pitch, vol_boost)
+                    
+                    if len(wav) > 44 and wav[:4] == b'RIFF':
+                        offset = 12
+                        while offset < len(wav) - 8:
+                            chunk_id = wav[offset:offset+4]
+                            chunk_size = struct.unpack('<I', wav[offset+4:offset+8])[0]
+                            if chunk_id == b'data':
+                                if first:
+                                    header = bytearray(wav[:offset+8])
+                                    struct.pack_into('<I', header, 4, 0xFFFFFFFF)
+                                    struct.pack_into('<I', header, offset+4, 0xFFFFFFFF)
+                                    yield bytes(header)
+                                    first = False
+                                yield wav[offset+8:offset+8+chunk_size]
+                                break
+                            offset += 8 + chunk_size
+                    else:
+                        yield wav
+                except Exception as e:
+                    print(f"[STREAM] Error on sentence {i+1}: {e}")
+                    continue
+            
+            if DEBUG: print(f"[STREAM] All sentences processed")
+        
+        response.content_type = 'application/octet-stream'
+        response.headers['Cache-Control'] = 'no-cache'
+        response.headers['X-Accel-Buffering'] = 'no'
+        return generate()
+    
+    def synthesize_once(self, text, speaker_id, speed, pitch, vol_boost, r_count):    
+        if DEBUG: print()
+        print(f"[HTTP] Speech request #{r_count}")
+        if DEBUG: print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
+        
+        try:
+            audio_data = self.synthesize_speech(text, speaker_id, speed, pitch, vol_boost)
+            response.content_type = 'audio/wav'
+            response.headers['Content-Length'] = str(len(audio_data))
+            return audio_data
+        except Exception as e:
+            print(f"[ERROR] Synthesis failed: {e}")
+            response.status = 500
+            response.content_type = 'text/plain'
+            return str(e)
+    
     def synthesize_speech(self, text: str, speaker_id: int, speed_percent: int, pitch_level: str, vol_boost: float) -> bytes:
         t_start = time.time() if DEBUG else None
         
@@ -431,12 +536,12 @@ class TTSService:
 class HTTPServer:
     """HTTP сервер"""
     def __init__(self, tts_service, application):
-        self.r_count = 0
         self.app = Bottle()
         self.tts_service = tts_service
         self.application = application
         self._setup_routes()
         self._setup_cors()
+        self.r_count = 0
     
     def _setup_cors(self):
         @self.app.hook('after_request')
@@ -455,15 +560,13 @@ class HTTPServer:
     
     def _setup_routes(self):
         @self.app.route('/silero/speakers', method='GET')
-        def get_speakers():
+        def speakers():
             response.content_type = 'application/json'
             print("[HTTP] Request list of speakers.")
-            return {"silero": [{"id": s["id"], "name": s["name"], "gender": s["gender"], "lang": s["lang"]} for s in Config.SPEAKERS]}
+            return self.tts_service.generate_speaker_names()
         
         @self.app.route('/silero/speak', method='GET')
-        def synthesize():
-            import re
-            
+        def speak():
             text = request.query.text or ""
             speaker_id = int(request.query.id or 0)
             speed = int(request.query.speed or 100)
@@ -477,106 +580,10 @@ class HTTPServer:
             
             self.r_count += 1
             
-            if streaming.lower() in ('1', 'true', 'yes', 'on'):
-                
-                sentences = re.split(r'(?<=[.!?…])\s+', text)
-                result = []
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if not sentence:
-                        continue
-                    
-                    if len(sentence) <= 200:
-                        result.append(sentence)
-                    else:
-                        parts = re.split(r'(?<=[,;:—])\s+', sentence)
-                        
-                        current = ""
-                        for part in parts:
-                            part = part.strip()
-                            if not part:
-                                continue
-                            
-                            if current and len(current) < 60:
-                                current += " " + part
-                            elif current:
-                                result.append(current)
-                                current = part
-                            else:
-                                current = part
-                        
-                        if current:
-                            if result and len(current) < 60:
-                                result[-1] += " " + current
-                            else:
-                                result.append(current)
-                
-                sentences = result
-                
-                if not sentences:
-                    response.status = 400
-                    return {"error": "No valid sentences found"}
-            
-                if DEBUG: print()
-                print(f"\n[HTTP] Stream request #{self.r_count}: {len(sentences)} sentences")
-                if DEBUG:
-                    print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
-                    for i, s in enumerate(sentences):
-                        print(f"  [{i+1}] {s[:80]}{'...' if len(s) > 80 else ''}")
-                
-                def generate():
-                    first = True
-                    for i, sentence in enumerate(sentences):
-                        try:
-                            if DEBUG:
-                                print()
-                                print(f"[STREAM] Synthesizing sentence {i+1}/{len(sentences)}...")
-                            
-                            wav = self.tts_service.synthesize_speech(
-                                sentence, speaker_id, speed, pitch, vol_boost)
-                            
-                            if len(wav) > 44 and wav[:4] == b'RIFF':
-                                offset = 12
-                                while offset < len(wav) - 8:
-                                    chunk_id = wav[offset:offset+4]
-                                    chunk_size = struct.unpack('<I', wav[offset+4:offset+8])[0]
-                                    if chunk_id == b'data':
-                                        if first:
-                                            header = bytearray(wav[:offset+8])
-                                            struct.pack_into('<I', header, 4, 0xFFFFFFFF)
-                                            struct.pack_into('<I', header, offset+4, 0xFFFFFFFF)
-                                            yield bytes(header)
-                                            first = False
-                                        yield wav[offset+8:offset+8+chunk_size]
-                                        break
-                                    offset += 8 + chunk_size
-                            else:
-                                yield wav
-                        except Exception as e:
-                            print(f"[STREAM] Error on sentence {i+1}: {e}")
-                            continue
-                    
-                    if DEBUG: print(f"[STREAM] All sentences processed")
-                
-                response.content_type = 'application/octet-stream'
-                response.headers['Cache-Control'] = 'no-cache'
-                response.headers['X-Accel-Buffering'] = 'no'
-                return generate()
-            
-            if DEBUG: print()
-            print(f"[HTTP] Speech request #{self.r_count}")
-            if DEBUG: print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
-            
-            try:
-                audio_data = self.tts_service.synthesize_speech(text, speaker_id, speed, pitch, vol_boost)
-                response.content_type = 'audio/wav'
-                response.headers['Content-Length'] = str(len(audio_data))
-                return audio_data
-            except Exception as e:
-                print(f"[ERROR] Synthesis failed: {e}")
-                response.status = 500
-                response.content_type = 'text/plain'
-                return str(e)
+            if streaming.lower() in ('true', '1', 'yes', 'on'):
+                return self.tts_service.synthesize_stream(text, speaker_id, speed, pitch, vol_boost, self.r_count)
+            else:
+                return self.tts_service.synthesize_once(text, speaker_id, speed, pitch, vol_boost, self.r_count)
         
         @self.app.route('/silero/restart', method='POST')
         def restart():
@@ -626,8 +633,8 @@ class Application:
             self.model = None
         
         num_to_words.cache_clear()
-        threading.Timer(1, os._exit(0)).start()
         print("[INFO] Application stopped.")
+        threading.Timer(1, os._exit(0)).start()
     
     def restart(self):
         if not self.running: return

@@ -37,6 +37,16 @@ xcopy "LunaTranslator\*" "dist\%FOLDERNAME%\LunaTranslator\" /E /I
 rename dist\%FOLDERNAME% "%RELEASE_DIR%"
 rename dist releases
 
+set RUN_DIR=releases\%RELEASE_DIR%
+
+(
+echo @echo off
+echo start "" "%%~dp0%FOLDERNAME%.exe" --debug
+echo pause
+) > "%RUN_DIR%\_run_cpu_debug.bat"
+
+(
+
 rmdir /s /q build __pycache__ 2>nul
 del /s /q *.pyc *.spec *.manifest 2>nul
 
