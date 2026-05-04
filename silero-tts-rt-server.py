@@ -297,7 +297,7 @@ class TextProcessor:
             return start + 1, text[start]
         
         num = int(text[start:i])
-        num_word = num2words(num, lang='ru')
+        num_word = num_to_words(num)
         
         if i < n and text[i] == '%':
             if num % 10 == 1 and num % 100 != 11:
@@ -312,8 +312,8 @@ class TextProcessor:
         if i < n and text[i] in '.,' and i + 1 < n and text[i+1].isdigit():
             k = i + 1
             while k < n and text[k].isdigit(): k += 1
-            fractional = int(text[i+1:k])
-            fractional_word = num2words(fractional, lang='ru')
+            fractional = text[i+1:k]
+            fractional_word = num_to_words(int(fractional))
             
             if num % 10 == 1 and num % 100 != 11:
                 whole_word = 'целая'
@@ -340,7 +340,7 @@ class TextProcessor:
             k = i + 1
             while k < n and text[k].isdigit(): k += 1
             denominator = int(text[i+1:k])
-            denominator_word = num2words(denominator, lang='ru')
+            denominator_word = num_to_words(denominator)
             
             return k, f"{num_word} дробь {denominator_word}"
         
