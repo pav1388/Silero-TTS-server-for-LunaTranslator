@@ -1,6 +1,9 @@
 WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](https://drive.google.com/file/d/1yBYmxAb43OktS8t_-VyOr0bL8weJpiJY/view?usp=sharing) - обновляемая ссылка
 
+
 Обсуждение - [Luna Translator на форуме 4PDA](https://4pda.to/forum/index.php?showtopic=1100472)
+
+Исходный код - [GitHub](https://github.com/pav1388/Silero-TTS-Real-Time-Server/)
 
 # Silero TTS Server
 Сервер синтеза речи на базе модели `Silero 5.5 ru`.
@@ -9,14 +12,15 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 
 - **Качество голоса:** Используется модель Silero v5_5_ru. Корректное чтение русского текста, расстановка ударений и Ё.
 - **Поддержка:** Чтение числовых значений, транслитерация латиницы.
-- **Производительность:** Оптимизирована текстовая обработка. Снижение качества генерируемого голоса при высокой нагрузке на CPU. Возможность вычислений на GPU Nvidia CUDA (по умолчанию используется CPU).
+- **Оптимизация:** Для озвучивания текста в реальном времени (с минимальными задержками).
+- **Производительность:** Снижение качества генерируемого голоса при высокой нагрузке на CPU. Возможность вычислений на GPU Nvidia CUDA (по умолчанию CPU, он быстрее на коротких репликах).
 
 ## Благодарности
 
 - **HIllya51:** За LunaTranslator [Github](https://github.com/HIllya51/LunaTranslator)
 - **Silero:** За доступные модели [Github](https://github.com/snakers4/silero-models), [Silero.ai](https://silero.ai/)
-- **Штакет:** За базовый скрипт и исходные материалы [Youtube](https://www.youtube.com/watch?v=r7eI_gON3X0).
-- **Виктор Шацков:** За базовую адаптацию голосов [Youtube](https://www.youtube.com/watch?v=JGq7Xxvr5oI).
+- **Штакет:** За идею и исходные материалы [Youtube](https://www.youtube.com/watch?v=r7eI_gON3X0).
+- **Виктор Шацков:** За идею адаптации голосов [Youtube](https://www.youtube.com/watch?v=JGq7Xxvr5oI).
 
 ## Требования
 
@@ -51,7 +55,7 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 1. Создайте папку `models` в директории рядом с файлом `silero-tts-for-luna-translator.py`.
 2. Скачайте основную модель (v5_5_ru, ~140 Мб) и поместите её в папку `models`:
    - [Ссылка на модель v5_5_ru.pt](https://models.silero.ai/models/tts/ru/v5_5_ru.pt)
-   - или программа сама скачает файл в случае его отсутствия при запуске
+   - или программа сама скачает модель в случае её отсутствия при запуске
    - другие доступные модели можно найти в [репозитории Silero](https://models.silero.ai/models/tts/ru/).
 
 ## Интеграция с Luna Translator
@@ -65,4 +69,6 @@ WIP. [тестовый CPU сервер для win7+ x64 Всё-в-Одном](h
 
 ## Тесты и отладка
 
-Откройте `tts-rt-server-simple-tester.html`, простой HTML интерфейс имитирующий запросы от LunaTranslator.
+Запустите скрипт с `--debug` аргументом из папки `scripts`.
+
+Откройте `tts-rt-server-simple-tester.html`, простой HTML5 интерфейс имитирующий запросы от LunaTranslator.

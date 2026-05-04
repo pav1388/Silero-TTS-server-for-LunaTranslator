@@ -41,9 +41,9 @@ set RUN_DIR=releases\%RELEASE_DIR%
 
 (
 echo @echo off
-echo start "" "%%~dp0%FOLDERNAME%.exe" --debug
+echo %FOLDERNAME%.exe --debug
 echo pause
-) > "%RUN_DIR%\_run_cpu_debug.bat"
+) > "%RUN_DIR%\_run_debug.bat"
 
 (
 
