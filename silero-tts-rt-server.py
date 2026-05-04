@@ -8,7 +8,7 @@ from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.6.2"
+MAIN_VERSION = "0.6.3"
 
 DEBUG = ('--debug' in sys.argv) or (os.environ.get('DEBUG', '0').lower() in ('1', 'true'))
 CUDA = ('--cuda' in sys.argv or '--gpu' in sys.argv) or (os.environ.get('CUDA', '0').lower() in ('1', 'true'))
@@ -203,12 +203,11 @@ class TextProcessor:
                       ':': pause1, ';': pause3, '—': pause3, '…': pause5}
     EMOTIONS = {'!': (107, 0), '?': (93, 0)} # 'знак': (speed в %, pitch от -2 до 2)
     ALLOWED = frozenset("_~абвгдеёжзийклмнопрстуфхцчшщъыьэюя +.,!?…:;–")
-    LATIN = frozenset("&%abcdefghijklmnopqrstuvwxyz")
+    LATIN = frozenset("abcdefghijklmnopqrstuvwxyz&")
     TRANSLIT_MAP = {'ough':'о','augh':'о','eigh':'эй','igh':'ай','tion':'шн','shch':'щ','ture': 'чер','sion': 'жн',
         'tch':'ч','sch':'ск','scr':'скр','thr':'тр','squ':'скв','ear':'ир','air':'эр','are':'эр','the':'зэ','and':'энд',
         'ea':'и','ee':'и','oo':'у','ai':'эй','ay':'эй','ei':'эй','ey':'эй','oi':'ой','oy':'ой','ou':'ау','ow':'ау','au':'о','aw':'о','ie':'и','ui':'у','ue':'ю','uo':'уо','eu':'ю','ew':'ю','oa':'о','oe':'о','sh':'ш','ch':'ч','zh':'ж','th':'з','kh':'х','ts':'ц','ph':'ф','wh':'в','gh':'г','qu':'кв','gu':'г','dg':'дж','ce':'це','ci':'си','cy':'си','ck':'к','ge':'дж','gi':'джи','gy':'джи','er':'эр',
-        '&':'и', '%': ' процентов', # это замены, пока тут побудут
-        'a':'а','b':'б','c':'к','d':'д','e':'е','f':'ф','g':'г','h':'х','i':'и','j':'дж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','q':'к','r':'р','s':'с','t':'т','u':'у','v':'в','w':'в','x':'кс','y':'и','z':'з'}
+        '&':'и','a':'а','b':'б','c':'к','d':'д','e':'е','f':'ф','g':'г','h':'х','i':'и','j':'дж','k':'к','l':'л','m':'м','n':'н','o':'о','p':'п','q':'к','r':'р','s':'с','t':'т','u':'у','v':'в','w':'в','x':'кс','y':'и','z':'з'}
 
     def __init__(self):
         self.speed_percent = 100
@@ -284,21 +283,61 @@ class TextProcessor:
             s = ''.join(buf).strip()
             if s: res.append(self._wrap(s, None))
         return ''.join(res).strip()
-
+    
     def _num(self, text: str, start: int) -> tuple:
         i, n = start, len(text)
         while i < n and text[i].isdigit(): i += 1
-        if i == start: return start + 1, text[start]
-        num1 = text[start:i]
+        
+        if i == start:
+            return start + 1, text[start]
+        
+        num = int(text[start:i])
+        num_word = num2words(num, lang='ru')
+        
+        if i < n and text[i] == '%':
+            if num % 10 == 1 and num % 100 != 11:
+                percent_form = 'процент'
+            elif 2 <= num % 10 <= 4 and (num % 100 < 10 or num % 100 >= 20):
+                percent_form = 'процента'
+            else:
+                percent_form = 'процентов'
+            
+            return i + 1, f"{num_word} {percent_form}"
+        
         if i < n and text[i] in '.,' and i + 1 < n and text[i+1].isdigit():
             k = i + 1
             while k < n and text[k].isdigit(): k += 1
-            return k, f"{num_to_words(num1)} точка {num_to_words(text[i+1:k])}"
+            fractional = text[i+1:k]
+            fractional_word = num2words(int(fractional), lang='ru')
+            
+            if num % 10 == 1 and num % 100 != 11:
+                whole_word = 'целая'
+            else:
+                whole_word = 'целых'
+            
+            fractional_len = len(fractional)
+            if fractional_len == 1:
+                fractional_part = 'десятых'
+            elif fractional_len == 2:
+                fractional_part = 'сотых'
+            elif fractional_len == 3:
+                fractional_part = 'тысячных'
+            elif fractional_len == 4:
+                fractional_part = 'десятитысячных'
+            else:
+                fractional_part = 'стотысячных'
+            
+            return k, f"{num_word} {whole_word} {fractional_word} {fractional_part}"
+        
         if i < n and text[i] == '/' and i + 1 < n and text[i+1].isdigit():
             k = i + 1
             while k < n and text[k].isdigit(): k += 1
-            return k, f"{num_to_words(num1)} дробь {num_to_words(text[i+1:k])}"
-        return i, num_to_words(num1)
+            denominator = int(text[i+1:k])
+            denominator_word = num2words(denominator, lang='ru')
+            
+            return k, f"{num_word} дробь {denominator_word}"
+        
+        return i, num_word
 
     def _trans(self, text: str, pos: int) -> tuple:
         node, best, best_pos = self.transl_trie, None, pos

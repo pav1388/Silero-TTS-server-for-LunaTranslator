@@ -1,7 +1,7 @@
 WIP. [CPU сервер для win7+ x64 Всё-в-Одном](https://drive.google.com/file/d/1yBYmxAb43OktS8t_-VyOr0bL8weJpiJY/view?usp=sharing) - обновляемая ссылка
 
 
-Обсуждение - [Luna Translator на форуме 4PDA](https://4pda.to/forum/index.php?showtopic=1100472)
+Обсуждение - [Luna Translator на форуме 4PDA](https://4pda.to/forum/index.php?showtopic=1100472&view=findpost&p=143241146)
 
 Исходный код - [GitHub](https://github.com/pav1388/Silero-TTS-Real-Time-Server/)
 
@@ -19,8 +19,8 @@ WIP. [CPU сервер для win7+ x64 Всё-в-Одном](https://drive.goog
 - **Чтение числовых значений и транслитерация латиницы** — обрабатываются сервером.
 - **Производительность** — снижение качества генерируемого голоса при высокой нагрузке на CPU.
 - **Вычисления на GPU Nvidia CUDA** (по умолчанию CPU, так как он быстрее на коротких репликах).
-- **Тестирование** — есть простой HTML5 клиент tts-rt-server-simple-tester.html.
-- **Адаптация под свой проект** — достаточно переписать в классе HTTPServer функцию _setup_routes().
+- **Тестирование** — есть простой HTML5 клиент `tts-rt-server-simple-tester.html`.
+- **Адаптация под свой проект** — достаточно переписать в классе `HTTPServer` функцию `_setup_routes()`.
 
 ## Благодарности
 
