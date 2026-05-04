@@ -8,7 +8,7 @@ from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.6.3"
+MAIN_VERSION = "0.6.4"
 
 DEBUG = ('--debug' in sys.argv) or (os.environ.get('DEBUG', '0').lower() in ('1', 'true'))
 CUDA = ('--cuda' in sys.argv or '--gpu' in sys.argv) or (os.environ.get('CUDA', '0').lower() in ('1', 'true'))
@@ -23,7 +23,7 @@ class Config:
     MODEL_URL = "https://models.silero.ai/models/tts/ru/v5_5_ru.pt"
     SAMPLE_RATE = 48000
     HOST, PORT = "127.0.0.1", 23457
-    MAX_TEXT_LENGTH = 950
+    MAX_TEXT_LENGTH = 900
     CPU_IDLE_TIMEOUT, CPU_MONITOR_INTERVAL, CPU_SAMPLE_DURATION = 30.0, 1.0, 0.07 # sec
     CPU_HIGH_THRESHOLD, CPU_CRITICAL_THRESHOLD = 85.0, 95.0 # %
     QUALITY_LEVELS = [
@@ -92,28 +92,32 @@ class ModelLoader:
     
     @staticmethod
     def load_model(model_path: str, device):
-        print(f"[INFO] Loading model '{model_path}'...")
+        print(f"[INFO] Loading model '{model_path}'...", end='', flush=True)
         try:
             package = torch.package.PackageImporter(model_path)
             model = package.load_pickle("tts_models", "model")
             model.to(device)
+            print(" OK")
             return model
         except Exception as e:
+            print(" FAIL")
             print(f"[ERROR] Failed to load model. File might be corrupted. Delete {model_path} and restart.")
             raise e
 
     @staticmethod
     def unload_model(model, device):
         if model is None: return
-        del model
-        
-        if device.type == 'cuda' and torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-            print("[INFO] CUDA cache cleared")
-        
-        print("[INFO] Model unloaded successfully")
+        print(f"[INFO] Unloading model...", end='', flush=True)
+        try:
+            del model
+            if device.type == 'cuda' and torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            print(" OK")
+        except Exception as e:
+            print(" FAIL")
+            raise e
 
 class CPUMonitor:
     """мониторинг загрузки CPU"""
@@ -132,7 +136,7 @@ class CPUMonitor:
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
-            if DEBUG: print(f"[DEBUG] CPU monitoring ON | Idle: {Config.CPU_IDLE_TIMEOUT}s | Int: {Config.CPU_MONITOR_INTERVAL}s | Dur: {Config.CPU_SAMPLE_DURATION}s")
+            if DEBUG: print(f"[DEBUG] CPU monitoring ON")
     
     def stop(self):
         with self.lock:
@@ -238,34 +242,35 @@ class TextProcessor:
 
     def _proc(self, text: str, len_text: int, has_latin: bool) -> str:
         res, buf, i, n = [], [], 0, len_text
+        BREAK_TIME_MAP, ALLOWED, LATIN, EMOTIONS = self.BREAK_TIME_MAP, self.ALLOWED, self.LATIN, self.EMOTIONS
         while i < n:
             ch = text[i]
             if ch.isdigit():
                 i, p = self._num(text, i)
                 buf.append(p)
                 continue
-            if has_latin and ch in self.LATIN:
+            if has_latin and ch in LATIN:
                 ni, tr = self._trans(text, i)
                 if tr and tr != ch: buf.append(tr)
                 i = ni
 				# word_start = i
-                # while i < n and text[i] in self.LATIN: i += 1
+                # while i < n and text[i] in LATIN: i += 1
                 # lat = text[word_start:i]
                 # cyr = translit(lat, 'ru')
                 # if cyr: buf.append(cyr)
                 continue
-            if ch in self.BREAK_TIME_MAP:
+            if ch in BREAK_TIME_MAP:
                 skip = 1
                 if ch == '.' and i + 2 < n and text[i+1] == '.':
                     if text[i+2] == '.':
                         ch = '…'
                         skip = 3
-                s = ''.join(buf).strip()
-                if s:
-                    if ch in self.EMOTIONS: text_to_wrap = s + ' ' + ch
+                if buf:
+                    s = ''.join(buf).strip()
+                    if ch in EMOTIONS: text_to_wrap = s + ' ' + ch
                     else: text_to_wrap = s
                     res.append(self._wrap(text_to_wrap, ch))
-                res.append(f'<break time="{self.BREAK_TIME_MAP[ch]}ms"/>')
+                res.append(f'<break time="{BREAK_TIME_MAP[ch]}ms"/>')
                 buf.clear()
                 i += skip
                 continue
@@ -273,7 +278,7 @@ class TextProcessor:
                 if not buf or buf[-1] != ' ': buf.append(' ')
                 i += 1
                 continue
-            if ch in self.ALLOWED:
+            if ch in ALLOWED:
                 buf.append(ch)
                 i += 1
                 continue
@@ -307,8 +312,8 @@ class TextProcessor:
         if i < n and text[i] in '.,' and i + 1 < n and text[i+1].isdigit():
             k = i + 1
             while k < n and text[k].isdigit(): k += 1
-            fractional = text[i+1:k]
-            fractional_word = num2words(int(fractional), lang='ru')
+            fractional = int(text[i+1:k])
+            fractional_word = num2words(fractional, lang='ru')
             
             if num % 10 == 1 and num % 100 != 11:
                 whole_word = 'целая'
@@ -324,8 +329,10 @@ class TextProcessor:
                 fractional_part = 'тысячных'
             elif fractional_len == 4:
                 fractional_part = 'десятитысячных'
-            else:
+            elif fractional_len == 5:
                 fractional_part = 'стотысячных'
+            else:
+                fractional_part = ''
             
             return k, f"{num_word} {whole_word} {fractional_word} {fractional_part}"
         
@@ -342,7 +349,8 @@ class TextProcessor:
     def _trans(self, text: str, pos: int) -> tuple:
         node, best, best_pos = self.transl_trie, None, pos
         j = pos
-        while j < len(text) and text[j] in node:
+        n = len(text)
+        while j < n and text[j] in node:
             node = node[text[j]]; j += 1
             if '_' in node: best, best_pos = node['_'], j
         return (best_pos, best) if best else (pos + 1, text[pos] if text[pos] in self.ALLOWED else " ")
@@ -360,8 +368,12 @@ class TextProcessor:
         except ValueError:
             emo_p = self.pitch_level
         
-        words = text.split()
         def attrs(rate, pitch): return f'rate="{rate}%" pitch="{pitch}"'
+        
+        if ' ' not in text:
+            return f'<prosody {attrs(emo_r, emo_p)}>{text}</prosody>'
+        
+        words = text.split()
         
         if len(words) < 4:
             return f'<prosody {attrs(emo_r, emo_p)}>{text}</prosody>'
@@ -378,11 +390,10 @@ class TextProcessor:
         return f'{head_text} <prosody {attrs(emo_r, emo_p)}>{tail_text}</prosody>'
 
 
-@lru_cache(maxsize=512)
-def num_to_words(num: str) -> str:
+@lru_cache(maxsize=2048)
+def num_to_words(num: int) -> str:
     """преобразование чисел в слова"""
-    if not num or not num.isdigit() or len(num) > 9: return str(num) if num else ""
-    return num2words(int(num), lang='ru')
+    return num2words(num, lang='ru')
 
 
 class AudioSynthesizer:
@@ -447,89 +458,108 @@ class TTSService:
     
     def synthesize_stream(self, text, speaker_id, speed, pitch, vol_boost, r_count):
         sentences = re.split(r'(?<=[.!?…])\s+', text)
+
         result = []
+        append = result.append
+
         for sentence in sentences:
             sentence = sentence.strip()
             if not sentence:
                 continue
-            
+
             if len(sentence) <= 200:
-                result.append(sentence)
-            else:
-                parts = re.split(r'(?<=[,;:—])\s+', sentence)
-                
-                current = ""
-                for part in parts:
-                    part = part.strip()
-                    if not part:
-                        continue
-                    
-                    if current and len(current) < 60:
-                        current += " " + part
-                    elif current:
-                        result.append(current)
-                        current = part
-                    else:
-                        current = part
-                
-                if current:
-                    if result and len(current) < 60:
-                        result[-1] += " " + current
-                    else:
-                        result.append(current)
-        
+                append(sentence)
+                continue
+
+            parts = re.split(r'(?<=[,;:—])\s+', sentence)
+
+            current = []
+            cur_len = 0
+            cur_join = " ".join
+
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+
+                if cur_len and cur_len < 60:
+                    current.append(part)
+                    cur_len += len(part) + 1
+                elif current:
+                    append(cur_join(current))
+                    current = [part]
+                    cur_len = len(part)
+                else:
+                    current = [part]
+                    cur_len = len(part)
+
+            if current:
+                if result and cur_len < 60:
+                    result[-1] += " " + cur_join(current)
+                else:
+                    append(cur_join(current))
+
         sentences = result
-        
+
         if not sentences:
             response.status = 400
             return {"error": "No valid sentences found"}
         
-        if DEBUG:
-            print()
+        if DEBUG: print()
         print(f"[HTTP] Stream request #{r_count}: {len(sentences)} sentences")
         
         if DEBUG:
             print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
             for i, s in enumerate(sentences):
                 print(f"  [{i+1}] {s[:80]}{'...' if len(s) > 80 else ''}")
-        
+
         def generate():
             first = True
+
             for i, sentence in enumerate(sentences):
                 try:
                     if DEBUG:
-                        print()
-                        print(f"[STREAM] Synthesizing sentence {i+1}/{len(sentences)}...")
-                    
+                        print(f"[STREAM] Synth {i+1}/{len(sentences)}")
+
                     wav = self.synthesize_speech(
-                        sentence, speaker_id, speed, pitch, vol_boost)
-                    
+                        sentence, speaker_id, speed, pitch, vol_boost
+                    )
+
                     if len(wav) > 44 and wav[:4] == b'RIFF':
                         offset = 12
+
                         while offset < len(wav) - 8:
                             chunk_id = wav[offset:offset+4]
                             chunk_size = struct.unpack('<I', wav[offset+4:offset+8])[0]
+
                             if chunk_id == b'data':
                                 if first:
                                     header = bytearray(wav[:offset+8])
+
                                     struct.pack_into('<I', header, 4, 0xFFFFFFFF)
                                     struct.pack_into('<I', header, offset+4, 0xFFFFFFFF)
+
                                     yield bytes(header)
                                     first = False
+
                                 yield wav[offset+8:offset+8+chunk_size]
                                 break
+
                             offset += 8 + chunk_size
+
                     else:
                         yield wav
+
                 except Exception as e:
-                    print(f"[STREAM] Error on sentence {i+1}: {e}")
+                    print(f"[STREAM] Error sentence {i+1}: {e}")
                     continue
-            
-            if DEBUG: print(f"[STREAM] All sentences processed")
-        
+
+            if DEBUG: print("[STREAM] All sentences processed")
+
         response.content_type = 'application/octet-stream'
         response.headers['Cache-Control'] = 'no-cache'
         response.headers['X-Accel-Buffering'] = 'no'
+
         return generate()
     
     def synthesize_once(self, text, speaker_id, speed, pitch, vol_boost, r_count):    
@@ -669,8 +699,36 @@ class Application:
         self.tts_service = TTSService(self.model, Config.DEVICE, self.cpu_monitor)
         self.http_server = HTTPServer(self.tts_service, self)
     
+    def warmup(self):
+        print("[INFO] Warming up model...", end='', flush=True)
+        try:
+            CUDA = Config.DEVICE.type == 'cuda'
+            tp = TextProcessor()
+            tp.set_ssml_params(100, "medium")
+            texts = ["привет", "как дела?", "это прогрев модели для устранения задержки"]
+            speaker = Config.SPEAKERS[0]["name"]
+
+            for text in texts:
+                ssml, _ = tp.process_text(text)
+
+                with torch.no_grad():
+                    audio = self.model.apply_tts(ssml_text=ssml, speaker=speaker, sample_rate=48000,
+                                put_accent=True, put_yo=True, put_stress_homo=True, put_yo_homo=True)
+
+                    if CUDA: torch.cuda.synchronize()
+                    else: _ = audio.numpy()
+                    del audio
+            for i in range(1000):
+                num_to_words(i)
+            print(" OK")
+        except Exception as e:
+            print(" FAIL")
+            raise e
+    
     def stop(self, signum=None, frame=None):
         if not self.running: return
+        print(f"[INFO] Stopping application...", end='', flush=True)
+        
         self.running = False
         
         if self.cpu_monitor:
@@ -682,7 +740,7 @@ class Application:
             self.model = None
         
         num_to_words.cache_clear()
-        print("[INFO] Application stopped.")
+        print(" OK")
         threading.Timer(1, os._exit(0)).start()
     
     def restart(self):
@@ -718,7 +776,8 @@ class Application:
             kernel32 = ctypes.windll.kernel32
             HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(self._win_handler)
             kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
-            
+        self.warmup()
+        
         print('=' * 55)
         print(f"  Silero TTS Real-Time Server v{MAIN_VERSION} by pav13")
         print(f"  Device: {str(Config.DEVICE).upper()}")
