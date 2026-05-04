@@ -8,7 +8,7 @@ from urllib.parse import unquote
 from functools import lru_cache
 import threading
 
-MAIN_VERSION = "0.6.1"
+MAIN_VERSION = "0.6.2"
 
 DEBUG = ('--debug' in sys.argv) or (os.environ.get('DEBUG', '0').lower() in ('1', 'true'))
 CUDA = ('--cuda' in sys.argv or '--gpu' in sys.argv) or (os.environ.get('CUDA', '0').lower() in ('1', 'true'))
@@ -27,12 +27,18 @@ class Config:
     CPU_IDLE_TIMEOUT, CPU_MONITOR_INTERVAL, CPU_SAMPLE_DURATION = 30.0, 1.0, 0.07 # sec
     CPU_HIGH_THRESHOLD, CPU_CRITICAL_THRESHOLD = 85.0, 95.0 # %
     QUALITY_LEVELS = [
-        {"sample_rate": 8000,  "put_accent": False, "put_yo": False, "name": "LOWEST"},
-        {"sample_rate": 8000,  "put_accent": True,  "put_yo": False, "name": "LOW"},
-        {"sample_rate": 24000, "put_accent": False, "put_yo": False, "name": "MED-LOW"},
-        {"sample_rate": 24000, "put_accent": True,  "put_yo": True,  "name": "MED"},
-        {"sample_rate": 48000, "put_accent": True,  "put_yo": False, "name": "HIGH"},
-        {"sample_rate": 48000, "put_accent": True,  "put_yo": True,  "name": "MAX"}
+        {"sample_rate": 8000,  "put_accent": False, "put_yo": False,
+                "put_stress_homo": False, "put_yo_homo": False, "name": "LOWEST"},
+        {"sample_rate": 8000,  "put_accent": True,  "put_yo": False,
+                "put_stress_homo": True,  "put_yo_homo": False, "name": "LOW"},
+        {"sample_rate": 24000, "put_accent": False, "put_yo": False,
+                "put_stress_homo": False, "put_yo_homo": False, "name": "MED-LOW"},
+        {"sample_rate": 24000, "put_accent": True,  "put_yo": True,
+                "put_stress_homo": True,  "put_yo_homo": True,  "name": "MED"},
+        {"sample_rate": 48000, "put_accent": True,  "put_yo": False,
+                "put_stress_homo": True,  "put_yo_homo": False, "name": "HIGH"},
+        {"sample_rate": 48000, "put_accent": True,  "put_yo": True,
+                "put_stress_homo": True,  "put_yo_homo": True,  "name": "MAX"}
     ]
     PITCH_ORDER = ["x-low", "low", "medium", "high", "x-high"]
     SPEAKERS = [
@@ -359,7 +365,8 @@ class AudioSynthesizer:
         hdr += b'data' + struct.pack('<I', sz)
         return hdr + raw
 
-    def synthesize(self, ssml: str, speaker_name: str, sample_rate: int, put_accent: bool, put_yo: bool, vol_boost: float) -> bytes:
+    def synthesize(self, ssml: str, speaker_name: str, sample_rate: int, 
+                put_accent: bool, put_yo: bool, put_stress_homo: bool, put_yo_homo: bool, vol_boost: float) -> bytes:
         try:
             with torch.no_grad():
                 if DEBUG and self.device.type == 'cuda':
@@ -367,7 +374,8 @@ class AudioSynthesizer:
             
                 audio = self.model.apply_tts(
                     ssml_text=ssml, speaker=speaker_name, sample_rate=sample_rate, 
-                    put_accent=put_accent, put_yo=put_yo)
+                    put_accent=put_accent, put_yo=put_yo,
+                    put_stress_homo=put_stress_homo, put_yo_homo=put_stress_homo)
             
                 if self.device.type == 'cuda':
                     self.inference_count += 1
@@ -437,8 +445,10 @@ class TTSService:
             response.status = 400
             return {"error": "No valid sentences found"}
         
-        if DEBUG: print()
-        print(f"\n[HTTP] Stream request #{r_count}: {len(sentences)} sentences")
+        if DEBUG:
+            print()
+        print(f"[HTTP] Stream request #{r_count}: {len(sentences)} sentences")
+        
         if DEBUG:
             print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
             for i, s in enumerate(sentences):
@@ -519,8 +529,8 @@ class TTSService:
             print(f"[DEBUG] L:{len_text} SSML:{ssml}")
         
         wav_bytes = self.audio_synthesizer.synthesize(
-            ssml, spk['name'], sr, 
-            q['put_accent'], q['put_yo'], 
+            ssml, spk['name'], sr,
+            q['put_accent'], q['put_yo'], q['put_stress_homo'], q['put_yo_homo'],
             vol_boost
         )
         
