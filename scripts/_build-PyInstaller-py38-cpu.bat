@@ -45,8 +45,6 @@ echo %FOLDERNAME%.exe --debug
 echo pause
 ) > "%RUN_DIR%\_run_debug.bat"
 
-(
-
 rmdir /s /q build __pycache__ 2>nul
 del /s /q *.pyc *.spec *.manifest 2>nul
 
