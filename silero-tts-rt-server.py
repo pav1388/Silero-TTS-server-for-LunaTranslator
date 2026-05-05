@@ -668,11 +668,11 @@ class HTTPServer:
             self.r_count += 1
 
             if speaker_id == 5:  # RANDOM both
-                speaker_id = (int(time.time() * 1000000) + self.r_count) % 5
+                speaker_id = int(time.time() * 1000000) % 5
             elif speaker_id == 6:  # RANDOM only_male
-                speaker_id = [0, 4][(int(time.time() * 1000000) + self.r_count) % 2]
+                speaker_id = [0, 4][int(time.time() * 1000000) % 2]
             elif speaker_id == 7:  # RANDOM only_female
-                speaker_id = [1, 2, 3][(int(time.time() * 1000000) + self.r_count) % 3]
+                speaker_id = [1, 2, 3][int(time.time() * 1000000) % 3]
             elif speaker_id == 8:  # HASH both
                 t = text[:200]
                 h = 5381
