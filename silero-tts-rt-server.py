@@ -6,12 +6,21 @@ from bottle import Bottle, request, response, run, hook
 from num2words import num2words
 from urllib.parse import unquote
 from functools import lru_cache
-import threading
+import threading, logging
 
-MAIN_VERSION = "0.6.4"
-
+MAIN_VERSION = "0.6.5"
 DEBUG = ('--debug' in sys.argv) or (os.environ.get('DEBUG', '0').lower() in ('1', 'true'))
 CUDA = ('--cuda' in sys.argv or '--gpu' in sys.argv) or (os.environ.get('CUDA', '0').lower() in ('1', 'true'))
+
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 class Config:
     """Конфигурация приложения"""
@@ -66,57 +75,57 @@ class ModelLoader:
             n_threads = 2 if (cores and cores > 1) else 1
             torch.set_num_threads(n_threads)
             torch.set_num_interop_threads(1)
-            print(f"[INFO] CPU Threads: {n_threads} | Detected cores: {cores}")
+            logger.info(f"CPU Threads: {n_threads} | Detected cores: {cores}")
         
         if device.type == 'cuda':
             torch.cuda.set_device(0)
             torch.cuda.empty_cache()
-            print(f"[INFO] GPU: {torch.cuda.get_device_name(0)} | Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+            logger.info(f"GPU: {torch.cuda.get_device_name(0)} | Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     
     @staticmethod
     def download_model(model_path: str):
         if not os.path.exists(model_path):
-            print(f"\n[ERROR] Model not found: {model_path}")
+            logger.error(f"Model not found: {model_path}")
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
             try:
                 import urllib.request
-                print(f"[INFO] Downloading model (~140Mb)...")
+                logger.info("Downloading model (~140Mb)...")
                 urllib.request.urlretrieve(Config.MODEL_URL, model_path, 
-                    lambda b, bs, ts: print(f"\r {int(b*bs*100/ts)}%", end=''))
-                print(f"\n[INFO] Model downloaded.")
+                    lambda b, bs, ts: logger.debug(f"Download: {int(b*bs*100/ts)}%"))
+                logger.info("Model downloaded.")
             except Exception as e:
-                print(f"\n[ERROR] Download failed: {e}")
-                print(f"\n Please download manually from: {Config.MODEL_URL}")
+                logger.error(f"Download failed: {e}")
+                logger.error(f"Please download manually from: {Config.MODEL_URL}")
                 input(f" and save as: {model_path}")
                 sys.exit(1)
     
     @staticmethod
     def load_model(model_path: str, device):
-        print(f"[INFO] Loading model '{model_path}'...", end='', flush=True)
+        logger.info(f"Loading model '{model_path}'...")
         try:
             package = torch.package.PackageImporter(model_path)
             model = package.load_pickle("tts_models", "model")
             model.to(device)
-            print(" OK")
+            logger.info("OK")
             return model
         except Exception as e:
-            print(" FAIL")
-            print(f"[ERROR] Failed to load model. File might be corrupted. Delete {model_path} and restart.")
+            logger.error("FAIL")
+            logger.error(f"Failed to load model. File might be corrupted. Delete {model_path} and restart.")
             raise e
 
     @staticmethod
     def unload_model(model, device):
         if model is None: return
-        print(f"[INFO] Unloading model...", end='', flush=True)
+        logger.info("Unloading model...")
         try:
             del model
             if device.type == 'cuda' and torch.cuda.is_available():
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
-            print(" OK")
+            logger.info("OK")
         except Exception as e:
-            print(" FAIL")
+            logger.error("FAIL")
             raise e
 
 class CPUMonitor:
@@ -136,13 +145,13 @@ class CPUMonitor:
             self.running = True
             self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
             self.monitor_thread.start()
-            if DEBUG: print(f"[DEBUG] CPU monitoring ON")
+            logger.debug("CPU monitoring ON")
     
     def stop(self):
         with self.lock:
             if not self.running: return
             self.running = False
-            if DEBUG: print("[DEBUG] CPU monitoring OFF")
+            logger.debug("CPU monitoring OFF")
     
     def record_activity(self):
         self.last_activity_time = time.time()
@@ -188,7 +197,7 @@ class CPUMonitor:
                         self.current_quality_level += 1 if target_level > self.current_quality_level else -1
                         self.current_quality_level = max(0, min(self.current_quality_level, self.max_level))
                         self.last_change_time = now
-                        if DEBUG: print(f"[DEBUG] Quality {'UP' if self.current_quality_level > old_level else 'DOWN'} to Lvl {self.current_quality_level} LOAD {avg_load:.1f}%")
+                        if DEBUG: logger.debug(f"Quality {'UP' if self.current_quality_level > old_level else 'DOWN'} to Lvl {self.current_quality_level} LOAD {avg_load:.1f}%")
                 time.sleep(Config.CPU_MONITOR_INTERVAL)
             except: time.sleep(5)
     
@@ -233,7 +242,7 @@ class TextProcessor:
         if len_text > Config.MAX_TEXT_LENGTH:
             len_text = Config.MAX_TEXT_LENGTH
             text = text[:len_text]
-            print(f"[INFO] Text length truncated to {len_text} chars.")
+            logger.info(f"Text length truncated to {len_text} chars.")
         
         text = unquote(text).lower()
         has_latin = any(ch in self.LATIN for ch in text)
@@ -505,13 +514,12 @@ class TTSService:
             response.status = 400
             return {"error": "No valid sentences found"}
         
-        if DEBUG: print()
-        print(f"[HTTP] Stream request #{r_count}: {len(sentences)} sentences")
+        logger.info(f"Stream request #{r_count}: {len(sentences)} sentences")
         
         if DEBUG:
-            print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
+            logger.debug(f"spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
             for i, s in enumerate(sentences):
-                print(f"  [{i+1}] {s[:80]}{'...' if len(s) > 80 else ''}")
+                logger.debug(f"  [{i+1}] {s[:80]}{'...' if len(s) > 80 else ''}")
 
         def generate():
             first = True
@@ -519,7 +527,7 @@ class TTSService:
             for i, sentence in enumerate(sentences):
                 try:
                     if DEBUG:
-                        print(f"[STREAM] Synth {i+1}/{len(sentences)}")
+                        logger.debug(f"Synth {i+1}/{len(sentences)}")
 
                     wav = self.synthesize_speech(
                         sentence, speaker_id, speed, pitch, vol_boost
@@ -551,10 +559,10 @@ class TTSService:
                         yield wav
 
                 except Exception as e:
-                    print(f"[STREAM] Error sentence {i+1}: {e}")
+                    logger.error(f"Error sentence {i+1}: {e}")
                     continue
 
-            if DEBUG: print("[STREAM] All sentences processed")
+            logger.debug("All sentences processed")
 
         response.content_type = 'application/octet-stream'
         response.headers['Cache-Control'] = 'no-cache'
@@ -562,10 +570,9 @@ class TTSService:
 
         return generate()
     
-    def synthesize_once(self, text, speaker_id, speed, pitch, vol_boost, r_count):    
-        if DEBUG: print()
-        print(f"[HTTP] Speech request #{r_count}")
-        if DEBUG: print(f"[HTTP] spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
+    def synthesize_once(self, text, speaker_id, speed, pitch, vol_boost, r_count):
+        logger.info(f"Speech request #{r_count}")
+        if DEBUG: logger.debug(f"spkr={speaker_id}, spd={speed}%, ptch={pitch}, vlm={vol_boost}dB.")
         
         try:
             audio_data = self.synthesize_speech(text, speaker_id, speed, pitch, vol_boost)
@@ -573,7 +580,7 @@ class TTSService:
             response.headers['Content-Length'] = str(len(audio_data))
             return audio_data
         except Exception as e:
-            print(f"[ERROR] Synthesis failed: {e}")
+            logger.error(f"Synthesis failed: {e}")
             response.status = 500
             response.content_type = 'text/plain'
             return str(e)
@@ -594,8 +601,8 @@ class TTSService:
         ssml, len_text = self.text_processor.process_text(text)
         
         if DEBUG: 
-            print(f"[DEBUG] N:{spk['name']} S:{speed_percent}% P:{pitch_level} Vol:{vol_boost}dB Q: {q['name']} SR:{sr}")
-            print(f"[DEBUG] L:{len_text} SSML:{ssml}")
+            logger.debug(f"N:{spk['name']} S:{speed_percent}% P:{pitch_level} Vol:{vol_boost}dB Q: {q['name']} SR:{sr}")
+            logger.debug(f"L:{len_text} SSML:{ssml}")
         
         wav_bytes = self.audio_synthesizer.synthesize(
             ssml, spk['name'], sr,
@@ -607,7 +614,7 @@ class TTSService:
             num_samples = len(wav_bytes) - 44
             dur = num_samples / (sr * 2)
             if dur > 0: 
-                print(f"[DEBUG] T:{(time.time()-t_start)*1000:.0f}ms D:{dur:.2f}s RTF:{(time.time()-t_start)/dur:.2f}")
+                logger.debug(f"T:{(time.time()-t_start)*1000:.0f}ms D:{dur:.2f}s RTF:{(time.time()-t_start)/dur:.2f}")
         
         return wav_bytes
 
@@ -641,7 +648,7 @@ class HTTPServer:
         @self.app.route('/silero/speakers', method='GET')
         def speakers():
             response.content_type = 'application/json'
-            print("[HTTP] Request list of speakers.")
+            logger.info("Request list of speakers.")
             return self.tts_service.generate_speaker_names()
         
         @self.app.route('/silero/speak', method='GET')
@@ -667,12 +674,12 @@ class HTTPServer:
         @self.app.route('/silero/restart', method='POST')
         def restart():
             try:
-                print("[HTTP] Reboot request.")
+                logger.info("Reboot request.")
                 threading.Thread(target=self.application.restart, daemon=True).start()
                 response.status = 200
                 return {"status": "success", "message": "Restarting..."}
             except Exception as e:
-                print(f"[ERROR] Restart failed: {e}")
+                logger.error(f"Restart failed: {e}")
                 response.status = 500
                 return {"error": str(e)}
     
@@ -700,7 +707,7 @@ class Application:
         self.http_server = HTTPServer(self.tts_service, self)
     
     def warmup(self):
-        print("[INFO] Warming up model...", end='', flush=True)
+        logger.info("Warming up model...")
         try:
             CUDA = Config.DEVICE.type == 'cuda'
             tp = TextProcessor()
@@ -720,14 +727,14 @@ class Application:
                     del audio
             for i in range(1000):
                 num_to_words(i)
-            print(" OK")
+            logger.info("OK")
         except Exception as e:
-            print(" FAIL")
+            logger.error("FAIL")
             raise e
     
     def stop(self, signum=None, frame=None):
         if not self.running: return
-        print(f"[INFO] Stopping application...", end='', flush=True)
+        logger.info("Stopping application...")
         
         self.running = False
         
@@ -740,12 +747,12 @@ class Application:
             self.model = None
         
         num_to_words.cache_clear()
-        print(" OK")
+        logger.info("OK")
         threading.Timer(1, os._exit(0)).start()
     
     def restart(self):
         if not self.running: return
-        print("[INFO] Restarting application...")
+        logger.info("Restarting application...")
         
         self.running = False
         
@@ -774,11 +781,18 @@ class Application:
         signal.signal(signal.SIGTERM, self.stop)
         
         if sys.platform == "win32":
-            kernel32 = ctypes.windll.kernel32
-            HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(self._win_handler)
-            kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
-        self.warmup()
+            try:
+                kernel32 = ctypes.windll.kernel32
+                HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(self._win_handler)
+                kernel32.SetConsoleCtrlHandler(HandlerRoutine, True)
+                hStdin = kernel32.GetStdHandle(-10)
+                mode = ctypes.c_ulong()
+                if kernel32.GetConsoleMode(hStdin, ctypes.byref(mode)):
+                    mode.value = (mode.value | 0x0080) & ~0x0040
+                    kernel32.SetConsoleMode(hStdin, mode)
+            except: pass
         
+        self.warmup()
         print('=' * 55)
         print(f"  Silero TTS Real-Time Server v{MAIN_VERSION} by pav13")
         print(f"  Device: {str(Config.DEVICE).upper()}")
@@ -789,7 +803,7 @@ class Application:
         self.running = True
         
         try: self.http_server.run(Config.HOST, Config.PORT)
-        except Exception as e: print(f"[ERROR] Server error: {e}")
+        except Exception as e: logger.error(f"Server error: {e}")
         finally: self.stop()
 
 if __name__ == "__main__":
