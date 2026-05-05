@@ -347,8 +347,8 @@
         2: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "kseniya", "gender": "F" },
         3: { "vol_boost": 0.5, "base_speed": 100, "base_pitch": "medium",  "name": "xenia", "gender": "F" },
         4: { "vol_boost": -1,  "base_speed": 87,  "base_pitch": "high",    "name": "eugene", "gender": "M" },
-        5: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "RANDOM", "gender": "?" },
-        6: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "HASH", "gender": "?" }
+        5: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "RANDOM", "gender": "both" },
+        6: { "vol_boost": 0,   "base_speed": 100, "base_pitch": "medium",  "name": "HASH", "gender": "both" }
     };
     
     var SPEAKERS = [
@@ -358,7 +358,7 @@
         { id: 3, name: "xenia", display: "3 xenia F ru" },
         { id: 4, name: "eugene", display: "4 eugene M ru" },
         { id: 5, name: "RANDOM", display: "5 RANDOM ru" },
-        { id: 6, name: "HASH", display: "6 HASH ru" }
+        { id: 8, name: "HASH", display: "8 HASH ru" }
     ];
     
     var speedValue = 0.0;
@@ -413,7 +413,7 @@
                             '% | ptch=' + preset.base_pitch + '</span>';
             } else if (spk.id == 5) {
                 presetText = '<span class="speaker-preset-info">каждый запрос — случайный голос</span>';
-            } else if (spk.id == 6) {
+            } else if (spk.id == 8) {
                 presetText = '<span class="speaker-preset-info">выбор голоса зависит от текста</span>';
             }
             var checkedAttr = (i === 0) ? ' checked="checked"' : '';

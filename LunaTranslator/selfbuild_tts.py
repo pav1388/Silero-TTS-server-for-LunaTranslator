@@ -51,6 +51,21 @@ class TTS(TTSbase):
             return None
         
         _, speaker_id, _ = voice
+        
+        # Чтобы применялся правильный пресет к случайному голосу
+        if speaker_id == 5:  # RANDOM both
+            speaker_id = int(time.time() * 1000000) % 5
+        elif speaker_id == 6:  # RANDOM only_male
+            speaker_id = [0, 4][int(time.time() * 1000000) % 2]
+        elif speaker_id == 7:  # RANDOM only_female
+            speaker_id = [1, 2, 3][int(time.time() * 1000000) % 3]
+        elif speaker_id == 8:  # HASH both
+            t = text[:200]
+            h = 5381
+            for c in t:
+                h = ((h << 5) + h) ^ ord(c)
+            speaker_id = (h & 0x7fffffff) % 5
+        
         preset = self.voice_presets.get(speaker_id, {"vol_boost": 0, "base_speed": 100, "base_pitch": "medium"})
         
         # Конвертация speed: из [-10, 10] в проценты [40%, 300%], где 0 = 100% с учетом базовой скорости голоса
